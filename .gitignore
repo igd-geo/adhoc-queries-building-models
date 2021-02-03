@@ -1,0 +1,6 @@
+.gradle/
+.idea/
+.vertx/
+bin/
+build/
+out/

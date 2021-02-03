@@ -1,0 +1,35 @@
+plugins {
+    id 'org.jetbrains.kotlin.jvm' version '1.4.21'
+}
+
+apply plugin: 'java'
+
+sourceCompatibility = '11'
+targetCompatibility = '11'
+
+ext {
+    vertxVersion = '4.0.0'
+}
+
+repositories {
+    jcenter()
+}
+
+dependencies {
+    implementation "io.vertx:vertx-core:$vertxVersion"
+    implementation "io.vertx:vertx-lang-kotlin:$vertxVersion"
+    implementation "io.vertx:vertx-lang-kotlin-coroutines:$vertxVersion"
+    implementation "io.vertx:vertx-web:$vertxVersion"
+
+    implementation 'com.fasterxml:aalto-xml:1.2.2'
+    implementation 'com.fasterxml.staxmate:staxmate:2.4.0'
+    implementation 'commons-io:commons-io:2.8.0'
+}
+
+compileKotlin {
+    kotlinOptions.jvmTarget = "11"
+}
+
+compileTestKotlin {
+    kotlinOptions.jvmTarget = "11"
+}
