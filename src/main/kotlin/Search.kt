@@ -146,6 +146,10 @@ fun extractChunk(buf: MappedByteBuffer, first: Int, last: Int): Substring {
 // strategy find 'key' in text, check if it's an attribute, get attribute
 // value, compare with 'value', finally get complete chunk if value matches
 fun run(path: String, key: String, value: String): List<String> {
+  return run(path, key) { it.contains(value) }
+}
+
+fun run(path: String, key: String, matches: (String) -> Boolean): List<String> {
   val start = System.currentTimeMillis()
 
   val raf = RandomAccessFile(path, "r")
@@ -182,7 +186,7 @@ fun run(path: String, key: String, value: String): List<String> {
       if (valueStart >= 0) {
         val valueEnd = indexOf(buf, valueStart, "<")
         val actualValue = substring(buf, valueStart + 1, valueEnd)
-        if (value == actualValue) {
+        if (matches(actualValue)) {
           val chunk = extractChunk(buf, tagStart, valueEnd)
           result.add(chunk.text)
           nextSearchPos = chunk.end
@@ -200,9 +204,8 @@ fun run(path: String, key: String, value: String): List<String> {
   println(path)
   println("File size: $size")
   println("Key: $key")
-  println("Value: $value")
   println("Time taken: ${System.currentTimeMillis() - start}")
-  println("Chunks checked: $checked")
+  println("Values checked: $checked")
   println("Matches: ${result.size}")
   println("Misses: ${checked - result.size}")
   println("Places where 'key' was not a string attribute: $keyNotAnAttribute")
@@ -265,11 +268,22 @@ class SearchVerticle : CoroutineVerticle() {
       launch {
         val key: String? = ctx.queryParams().get("key")
         val value = ctx.queryParams().get("value")
+        val minValue = ctx.queryParams().get("minValue")
+        val maxValue = ctx.queryParams().get("maxValue")
         val singleFile = ctx.queryParams().get("singleFile").toBoolean()
         val response = ctx.response()
-        if (value == null) {
-          response.setStatusCode(400).end()
+        if (key == null && value == null) {
+          response.setStatusCode(400).end("Either [value], [key + value] or [key + minValue + maxValue] must be given")
+        } else if ((minValue != null && maxValue == null) || (minValue == null && maxValue != null)) {
+          response.setStatusCode(400).end("minValue and maxValue must both be given")
+        } else if ((minValue != null || maxValue != null) && key == null) {
+          response.setStatusCode(400).end("minValue and maxValue can only be used in combination with key")
+        } else if (minValue == null && maxValue == null && value == null) {
+          response.setStatusCode(400).end("Missing value")
         } else {
+          val nMinValue = minValue?.toInt()
+          val nMaxValue = maxValue?.toInt()
+
           val path = "/Users/mkraemer/code/ogc3dc/DA_WISE_GML_enhanced/"
           val fs = vertx.fileSystem()
           var files = fs.readDir(path).await()
@@ -283,7 +297,17 @@ class SearchVerticle : CoroutineVerticle() {
           val ds = files.map { f ->
             async {
               vertx.executeBlocking<Unit>({ p ->
-                val result = runParseXML(f, key, value)
+                val result = if (key == null) {
+                  runParseXML(f, null, value)
+                } else if (nMinValue != null && nMaxValue != null) {
+                  run(f, key) {
+                    it.toIntOrNull()?.let { actualValue ->
+                      actualValue in nMinValue..nMaxValue
+                    } ?: false
+                  }
+                } else {
+                  run(f, key, value)
+                }
                 for (r in result) {
                   response.write(r)
                 }
@@ -320,6 +344,12 @@ suspend fun main() {
   // should yield 1179 chunks
   // runParseXML(path, "zipcode", "10019")
   run(path, "zipcode", "10019")
+
+  run(path, "zipcode") { v ->
+    v.toIntOrNull()?.let { zipcode ->
+      zipcode in 10018..10020
+    } ?: false
+  }
 
   // numeric attributes:
   // zipcode (integer), e.g. 10019
