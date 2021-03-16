@@ -16,6 +16,8 @@ import java.nio.channels.FileChannel
 
 val XML_FACTORY = SMInputFactory(InputFactoryImpl())
 
+data class Tag(val start: Int, val end: Int, val name: String)
+
 // see https://en.wikipedia.org/wiki/Boyer%E2%80%93Moore_string-search_algorithm
 fun indexOfBoyerMoore(haystack: MappedByteBuffer, needle: String): List<Int> {
   if (needle.isEmpty()) {
@@ -141,6 +143,15 @@ fun substring(buf: MappedByteBuffer, start: Int, end: Int): String {
   return String(tmp)
 }
 
+fun startsWith(buf: MappedByteBuffer, start: Int, needle: String): Boolean {
+  for (j in start until start + needle.length) {
+    if (j >= buf.limit() || buf[j].toChar() != needle[j - start]) {
+      return false
+    }
+  }
+  return true
+}
+
 fun readRootElement(buf: MappedByteBuffer): String {
   var start = -1
   for (i in 0 until buf.limit() - 1) {
@@ -196,21 +207,104 @@ fun isAttributeEquals(rootElement: String, chunk: String, key: String, value: St
   return false
 }
 
-fun run(path: String, key: String?, value: String): List<String> {
+fun findNextTag(buf: MappedByteBuffer, start: Int): Tag {
+  val s = indexOf(buf, start, "<")
+  val sb = StringBuilder()
+  var e = s + 1
+  while (e < buf.limit() && buf[e].toChar() != '>') {
+    sb.append(buf[e].toChar())
+    e++
+  }
+  return Tag(s, e, sb.toString())
+}
+
+fun extractChunk(buf: MappedByteBuffer, first: Int, last: Int): String {
+  val startStr = "<core:cityObjectMember"
+  val s = lastIndexOf(buf, first, startStr)
+
+  val endStr = "/core:cityObjectMember>"
+  val e = indexOf(buf, last, endStr) + endStr.length
+
+  return substring(buf, s, e)
+}
+
+// strategy find 'key' in text, check if it's an attribute, get attribute
+// value, compare with 'value', finally get complete chunk if value matches
+fun run(path: String, key: String, value: String): List<String> {
   val start = System.currentTimeMillis()
 
-//  val i = File(path).inputStream()
-//  i.use {
-//    val buf = ByteArray(65536)
-//    var r: Int
-//    do {
-//      r = i.read(buf)
-//      for (n in 0 until r) {
-//        val c = buf[n]
-//        ++count
-//      }
-//    } while (r >= 0)
-//  }
+  val raf = RandomAccessFile(path, "r")
+  val channel = raf.channel
+  val size = channel.size().coerceAtMost(Int.MAX_VALUE.toLong() - 100) // TODO 2GB MAX!
+  val buf = channel.map(FileChannel.MapMode.READ_ONLY, 0, size)
+
+  var keyNotAnAttribute = 0
+  var valueNotFound = 0
+  val l = indexOfBoyerMoore(buf, """"$key"""")
+  val result = mutableListOf<String>()
+  for (i in l) {
+    val tagStart = lastIndexOf(buf, i, "<")
+    if (startsWith(buf, tagStart, "<gen:stringAttribute ")) { // TODO support other namespaces
+      val tagEnd = indexOf(buf, i, ">")
+      var nts = tagEnd
+      var valueStart = -1
+      while (valueStart < 0) {
+        val nextTag = findNextTag(buf, nts)
+        if (nextTag.name == "gen:value") {
+          valueStart = nextTag.end
+        } else if (nextTag.name == "/gen:stringAttribute") {
+          break
+        }
+        nts = nextTag.end
+      }
+
+      if (valueStart >= 0) {
+        val valueEnd = indexOf(buf, valueStart, "<")
+        val actualValue = substring(buf, valueStart + 1, valueEnd)
+        if (value == actualValue) {
+          val chunk = extractChunk(buf, tagStart, valueEnd)
+          result.add(chunk)
+        }
+      } else {
+        valueNotFound++
+      }
+    } else {
+      keyNotAnAttribute++
+    }
+  }
+
+  println(path)
+  println("File size: $size")
+  println("Key: $key")
+  println("Value: $value")
+  println("Time taken: ${System.currentTimeMillis() - start}")
+  // println("Chunk bounds: $l")
+  println("Chunks checked: ${l.size}")
+  println("Matches: ${result.size}")
+  println("Misses: ${l.size - result.size}")
+  println("Places where 'key' was not a string attribute: $keyNotAnAttribute")
+  println("Places where the value of the string attribute 'key' could not found: $valueNotFound")
+
+  return result
+}
+
+// strategy: find 'value' in text, get chunk around it, parse chunk with XML
+// parser, finally compare attribute value
+fun runParseXML(path: String, key: String?, value: String): List<String> {
+  val start = System.currentTimeMillis()
+
+  //  val i = File(path).inputStream()
+  //  i.use {
+  //    val buf = ByteArray(65536)
+  //    var r: Int
+  //    do {
+  //      r = i.read(buf)
+  //      for (n in 0 until r) {
+  //        val c = buf[n]
+  //        ++count
+  //      }
+  //    } while (r >= 0)
+  //  }
 
   val raf = RandomAccessFile(path, "r")
   val channel = raf.channel
@@ -222,13 +316,7 @@ fun run(path: String, key: String?, value: String): List<String> {
   val l = indexOfBoyerMoore(buf, value)
   val result = mutableListOf<String>()
   for (i in l) {
-    val startStr = "<core:cityObjectMember"
-    val s = lastIndexOf(buf, i, startStr)
-
-    val endStr = "/core:cityObjectMember>"
-    val e = indexOf(buf, i, endStr) + endStr.length
-
-    val chunk = substring(buf, s, e)
+    val chunk = extractChunk(buf, i, i)
     if (key == null || isAttributeEquals(rootElement, chunk, key, value)) {
       result.add(chunk)
     }
@@ -239,10 +327,10 @@ fun run(path: String, key: String?, value: String): List<String> {
   println("Key: $key")
   println("Value: $value")
   println("Time taken: ${System.currentTimeMillis() - start}")
-  println("Chunk bounds: $l")
+  // println("Chunk bounds: $l")
   println("Chunks checked: ${l.size}")
   println("Matches: ${result.size}")
-  // println(e)
+  println("Misses: ${l.size - result.size}")
 
   return result
 }
@@ -276,7 +364,7 @@ class SearchVerticle : CoroutineVerticle() {
           val ds = files.map { f ->
             async {
               vertx.executeBlocking<Unit>({ p ->
-                val result = run(f, key, value)
+                val result = runParseXML(f, key, value)
                 for (r in result) {
                   response.write(r)
                 }
@@ -299,10 +387,21 @@ class SearchVerticle : CoroutineVerticle() {
   }
 }
 
+// TODO caveat: only supports plain ASCII encoding, proper UTF-8 decoding might actually affect performance
+// TODO caveat: if file is not well formatted we might search until the end (e.g. when looking for the end of a tag or chunk)
 suspend fun main() {
   val vertx = Vertx.vertx()
   // vertx.deployVerticle(SearchVerticle())
 
   val path = "/Users/mkraemer/code/ogc3dc/DA_WISE_GML_enhanced/DA12_3D_Buildings_Merged.gml"
-  run(path, "ownername", "Empire State Building")
+  runParseXML(path, "ownername", "Empire State Building")
+  // runParseXML(path, null, "gml")
+  // val chunks = run(path, "zipcode", "10019")
+  // val xmlChunks = runParseXML(path, "zipcode", "10019")
+
+  // numeric attributes:
+  // zipcode (integer), e.g. 10019
+  // numfloors (integer, but encoded as float, e.g. 6.0000000)
+  // latitude, 40.7685485
+  // longitude, -73.9864944
 }
