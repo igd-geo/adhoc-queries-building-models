@@ -1,3 +1,5 @@
+import BoyerMooreHorspoolRaita.processBytes
+import BoyerMooreHorspoolRaita.searchBytes
 import com.fasterxml.aalto.stax.InputFactoryImpl
 import io.vertx.core.Vertx
 import io.vertx.core.http.HttpServerOptions
@@ -16,94 +18,7 @@ import java.nio.channels.FileChannel
 
 val XML_FACTORY = SMInputFactory(InputFactoryImpl())
 
-data class Tag(val start: Int, val end: Int, val name: String)
-
-// see https://en.wikipedia.org/wiki/Boyer%E2%80%93Moore_string-search_algorithm
-fun indexOfBoyerMoore(haystack: MappedByteBuffer, needle: String): List<Int> {
-  if (needle.isEmpty()) {
-    return listOf(0)
-  }
-
-  val charTable = makeCharTable(needle)
-  val offsetTable = makeOffsetTable(needle)
-
-  val result = mutableListOf<Int>()
-  var i = needle.length - 1
-  var j: Int
-  while (i < haystack.limit()) {
-    j = needle.length - 1
-    while (needle[j] == haystack[i].toChar()) {
-      if (j == 0) {
-        result.add(i)
-        break
-      }
-      --i
-      --j
-    }
-    i += offsetTable[needle.length - 1 - j].coerceAtLeast(charTable[haystack[i].toInt()])
-  }
-
-  return result
-}
-
-private fun makeCharTable(needle: String): IntArray {
-  val alphabetSize = Character.MAX_VALUE.toInt() + 1 // 65536
-  val table = IntArray(alphabetSize)
-
-  for (i in table.indices) {
-    table[i] = needle.length
-  }
-
-  for (i in 0 until needle.length - 2) {
-    table[needle[i].toInt()] = needle.length - 1 - i
-  }
-
-  return table
-}
-
-private fun makeOffsetTable(needle: String): IntArray {
-  val table = IntArray(needle.length)
-  var lastPrefixPosition = needle.length
-
-  for (i in needle.length downTo 1) {
-    if (isPrefix(needle, i)) {
-      lastPrefixPosition = i
-    }
-    table[needle.length - i] = lastPrefixPosition - i + needle.length
-  }
-
-  for (i in 0 until needle.length - 1) {
-    val slen = suffixLength(needle, i)
-    table[slen] = needle.length - 1 - i + slen
-  }
-
-  return table
-}
-
-private fun isPrefix(needle: String, p: Int): Boolean {
-  var i = p
-  var j = 0
-  while (i < needle.length) {
-    if (needle[i] != needle[j]) {
-      return false
-    }
-    ++i
-    ++j
-  }
-  return true
-}
-
-private fun suffixLength(needle: String, p: Int): Int {
-  var len = 0
-  var i = p
-  var j = needle.length - 1
-  while (i >= 0 && needle[i] == needle[j]) {
-    len += 1
-    --i
-    --j
-  }
-  return len
-}
+data class Substring(val start: Int, val end: Int, val text: String)
 
 fun indexOf(haystack: MappedByteBuffer, offset: Int, needle: String): Int {
   for (i in offset until haystack.limit() - needle.length) {
@@ -207,7 +122,7 @@ fun isAttributeEquals(rootElement: String, chunk: String, key: String, value: St
   return false
 }
 
-fun findNextTag(buf: MappedByteBuffer, start: Int): Tag {
+fun findNextTag(buf: MappedByteBuffer, start: Int): Substring {
   val s = indexOf(buf, start, "<")
   val sb = StringBuilder()
   var e = s + 1
@@ -215,17 +130,17 @@ fun findNextTag(buf: MappedByteBuffer, start: Int): Tag {
     sb.append(buf[e].toChar())
     e++
   }
-  return Tag(s, e, sb.toString())
+  return Substring(s, e, sb.toString())
 }
 
-fun extractChunk(buf: MappedByteBuffer, first: Int, last: Int): String {
+fun extractChunk(buf: MappedByteBuffer, first: Int, last: Int): Substring {
   val startStr = "<core:cityObjectMember"
   val s = lastIndexOf(buf, first, startStr)
 
   val endStr = "/core:cityObjectMember>"
   val e = indexOf(buf, last, endStr) + endStr.length
 
-  return substring(buf, s, e)
+  return Substring(s, e, substring(buf, s, e))
 }
 
 // strategy find 'key' in text, check if it's an attribute, get attribute
@@ -238,11 +153,17 @@ fun run(path: String, key: String, value: String): List<String> {
   val size = channel.size().coerceAtMost(Int.MAX_VALUE.toLong() - 100) // TODO 2GB MAX!
   val buf = channel.map(FileChannel.MapMode.READ_ONLY, 0, size)
 
+  var checked = 0
   var keyNotAnAttribute = 0
   var valueNotFound = 0
-  val l = indexOfBoyerMoore(buf, """"$key"""")
+  val pattern = """"$key"""".toByteArray()
+  val processedPattern = processBytes(pattern)
+  var i = searchBytes(buf, 0, buf.limit(), pattern, processedPattern)
   val result = mutableListOf<String>()
-  for (i in l) {
+  while (i >= 0) {
+    checked++
+    var nextSearchPos = i + pattern.size
+
     val tagStart = lastIndexOf(buf, i, "<")
     if (startsWith(buf, tagStart, "<gen:stringAttribute ")) { // TODO support other namespaces
       val tagEnd = indexOf(buf, i, ">")
@@ -250,9 +171,9 @@ fun run(path: String, key: String, value: String): List<String> {
       var valueStart = -1
       while (valueStart < 0) {
         val nextTag = findNextTag(buf, nts)
-        if (nextTag.name == "gen:value") {
+        if (nextTag.text == "gen:value") {
           valueStart = nextTag.end
-        } else if (nextTag.name == "/gen:stringAttribute") {
+        } else if (nextTag.text == "/gen:stringAttribute") {
           break
         }
         nts = nextTag.end
@@ -263,7 +184,8 @@ fun run(path: String, key: String, value: String): List<String> {
         val actualValue = substring(buf, valueStart + 1, valueEnd)
         if (value == actualValue) {
           val chunk = extractChunk(buf, tagStart, valueEnd)
-          result.add(chunk)
+          result.add(chunk.text)
+          nextSearchPos = chunk.end
         }
       } else {
         valueNotFound++
@@ -271,6 +193,8 @@ fun run(path: String, key: String, value: String): List<String> {
     } else {
       keyNotAnAttribute++
     }
+
+    i = searchBytes(buf, nextSearchPos, buf.limit(), pattern, processedPattern)
   }
 
   println(path)
@@ -278,10 +202,9 @@ fun run(path: String, key: String, value: String): List<String> {
   println("Key: $key")
   println("Value: $value")
   println("Time taken: ${System.currentTimeMillis() - start}")
-  // println("Chunk bounds: $l")
-  println("Chunks checked: ${l.size}")
+  println("Chunks checked: $checked")
   println("Matches: ${result.size}")
-  println("Misses: ${l.size - result.size}")
+  println("Misses: ${checked - result.size}")
   println("Places where 'key' was not a string attribute: $keyNotAnAttribute")
   println("Places where the value of the string attribute 'key' could not found: $valueNotFound")
 
@@ -293,19 +216,6 @@ fun run(path: String, key: String, value: String): List<String> {
 fun runParseXML(path: String, key: String?, value: String): List<String> {
   val start = System.currentTimeMillis()
 
-  //  val i = File(path).inputStream()
-  //  i.use {
-  //    val buf = ByteArray(65536)
-  //    var r: Int
-  //    do {
-  //      r = i.read(buf)
-  //      for (n in 0 until r) {
-  //        val c = buf[n]
-  //        ++count
-  //      }
-  //    } while (r >= 0)
-  //  }
-
   val raf = RandomAccessFile(path, "r")
   val channel = raf.channel
   val size = channel.size().coerceAtMost(Int.MAX_VALUE.toLong() - 100) // TODO 2GB MAX!
@@ -313,13 +223,22 @@ fun runParseXML(path: String, key: String?, value: String): List<String> {
 
   val rootElement = readRootElement(buf)
 
-  val l = indexOfBoyerMoore(buf, value)
+  var checked = 0
+  val pattern = value.toByteArray()
+  val processedPattern = processBytes(pattern)
+  var i = searchBytes(buf, 0, buf.limit(), pattern, processedPattern)
   val result = mutableListOf<String>()
-  for (i in l) {
+  while (i >= 0) {
+    checked++
+    var nextSearchPos = i + pattern.size
+
     val chunk = extractChunk(buf, i, i)
-    if (key == null || isAttributeEquals(rootElement, chunk, key, value)) {
-      result.add(chunk)
+    if (key == null || isAttributeEquals(rootElement, chunk.text, key, value)) {
+      result.add(chunk.text)
+      nextSearchPos = chunk.end
     }
+
+    i = searchBytes(buf, nextSearchPos, buf.limit(), pattern, processedPattern)
   }
 
   println(path)
@@ -328,9 +247,9 @@ fun runParseXML(path: String, key: String?, value: String): List<String> {
   println("Value: $value")
   println("Time taken: ${System.currentTimeMillis() - start}")
   // println("Chunk bounds: $l")
-  println("Chunks checked: ${l.size}")
+  println("Chunks checked: $checked")
   println("Matches: ${result.size}")
-  println("Misses: ${l.size - result.size}")
+  println("Misses: ${checked - result.size}")
 
   return result
 }
@@ -394,10 +313,13 @@ suspend fun main() {
   // vertx.deployVerticle(SearchVerticle())
 
   val path = "/Users/mkraemer/code/ogc3dc/DA_WISE_GML_enhanced/DA12_3D_Buildings_Merged.gml"
-  runParseXML(path, "ownername", "Empire State Building")
-  // runParseXML(path, null, "gml")
-  // val chunks = run(path, "zipcode", "10019")
-  // val xmlChunks = runParseXML(path, "zipcode", "10019")
+  // should yield 1 chunk
+  // runParseXML(path, "ownername", "Empire State Building")
+  run(path, "ownername", "Empire State Building")
+
+  // should yield 1179 chunks
+  // runParseXML(path, "zipcode", "10019")
+  run(path, "zipcode", "10019")
 
   // numeric attributes:
   // zipcode (integer), e.g. 10019
