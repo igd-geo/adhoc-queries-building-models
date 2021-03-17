@@ -84,7 +84,7 @@ fun readRootElement(buf: MappedByteBuffer): String {
   return ""
 }
 
-fun isAttributeEquals(rootElement: String, chunk: String, key: String, value: String): Boolean {
+fun isXMLAttributeEquals(rootElement: String, chunk: String, key: String, value: String): Boolean {
   val rootElementReader = StringReader(rootElement)
   val endElementReader = StringReader("</core:CityModel>")
   val chunkReader = StringReader(chunk)
@@ -122,6 +122,33 @@ fun isAttributeEquals(rootElement: String, chunk: String, key: String, value: St
   return false
 }
 
+fun getAttributeValue(buf: MappedByteBuffer, i: Int): Substring? {
+  val tagStart = lastIndexOf(buf, i, "<")
+  if (startsWith(buf, tagStart, "<gen:stringAttribute ")) { // TODO support other namespaces
+    val tagEnd = indexOf(buf, i, ">")
+    var nts = tagEnd
+    var valueStart = -1
+    while (valueStart < 0) {
+      val nextTag = findNextTag(buf, nts)
+      if (nextTag.text == "gen:value") {
+        valueStart = nextTag.end
+        break
+      } else if (nextTag.text == "/gen:stringAttribute") {
+        break
+      }
+      nts = nextTag.end
+    }
+
+    return if (valueStart >= 0) {
+      val valueEnd = indexOf(buf, valueStart, "<")
+      Substring(valueStart + 1, valueEnd, substring(buf, valueStart + 1, valueEnd))
+    } else {
+      null
+    }
+  }
+  return null
+}
+
 fun findNextTag(buf: MappedByteBuffer, start: Int): Substring {
   val s = indexOf(buf, start, "<")
   val sb = StringBuilder()
@@ -133,14 +160,19 @@ fun findNextTag(buf: MappedByteBuffer, start: Int): Substring {
   return Substring(s, e, sb.toString())
 }
 
-fun extractChunk(buf: MappedByteBuffer, first: Int, last: Int): Substring {
+fun findChunk(buf: MappedByteBuffer, first: Int, last: Int): IntRange {
   val startStr = "<core:cityObjectMember"
   val s = lastIndexOf(buf, first, startStr)
 
   val endStr = "/core:cityObjectMember>"
   val e = indexOf(buf, last, endStr) + endStr.length
 
-  return Substring(s, e, substring(buf, s, e))
+  return s..e
+}
+
+fun extractChunk(buf: MappedByteBuffer, first: Int, last: Int): Substring {
+  val r = findChunk(buf, first, last)
+  return Substring(r.first, r.last, substring(buf, r.first, r.last))
 }
 
 // strategy find 'key' in text, check if it's an attribute, get attribute
@@ -150,6 +182,14 @@ fun run(path: String, key: String, value: String): List<String> {
 }
 
 fun run(path: String, key: String, matches: (String) -> Boolean): List<String> {
+  return run(path, listOf(key)) { _, value -> matches(value) }
+}
+
+fun run(path: String, keys: List<String>, matches: (key: String, value: String) -> Boolean): List<String> {
+  if (keys.isEmpty()) {
+    return emptyList()
+  }
+
   val start = System.currentTimeMillis()
 
   val raf = RandomAccessFile(path, "r")
@@ -157,60 +197,69 @@ fun run(path: String, key: String, matches: (String) -> Boolean): List<String> {
   val size = channel.size().coerceAtMost(Int.MAX_VALUE.toLong() - 100) // TODO 2GB MAX!
   val buf = channel.map(FileChannel.MapMode.READ_ONLY, 0, size)
 
+  // process keys
+  val patterns = keys.map { """"$it"""".toByteArray() }
+  val processedPatterns = patterns.map { processBytes(it) }
+
   var checked = 0
-  var keyNotAnAttribute = 0
   var valueNotFound = 0
-  val pattern = """"$key"""".toByteArray()
-  val processedPattern = processBytes(pattern)
-  var i = searchBytes(buf, 0, buf.limit(), pattern, processedPattern)
+  var chunksSearchedAgain = 0
+  var i = searchBytes(buf, 0, buf.limit(), patterns[0], processedPatterns[0])
   val result = mutableListOf<String>()
   while (i >= 0) {
     checked++
-    var nextSearchPos = i + pattern.size
+    var nextSearchPos = i + patterns[0].size
 
-    val tagStart = lastIndexOf(buf, i, "<")
-    if (startsWith(buf, tagStart, "<gen:stringAttribute ")) { // TODO support other namespaces
-      val tagEnd = indexOf(buf, i, ">")
-      var nts = tagEnd
-      var valueStart = -1
-      while (valueStart < 0) {
-        val nextTag = findNextTag(buf, nts)
-        if (nextTag.text == "gen:value") {
-          valueStart = nextTag.end
-          break
-        } else if (nextTag.text == "/gen:stringAttribute") {
-          break
-        }
-        nts = nextTag.end
-      }
-
-      if (valueStart >= 0) {
-        val valueEnd = indexOf(buf, valueStart, "<")
-        val actualValue = substring(buf, valueStart + 1, valueEnd)
-        if (matches(actualValue)) {
-          val chunk = extractChunk(buf, tagStart, valueEnd)
-          result.add(chunk.text)
-          nextSearchPos = chunk.end
-        }
+    var allValuesMatch = true
+    var chunkRange: IntRange? = null
+    for ((j, key) in keys.withIndex()) {
+      val p = if (chunkRange != null) {
+        // We already found a chunk (from searching for the first key). Search
+        // inside the chunk again and try to find the next key.
+        chunksSearchedAgain++
+        searchBytes(buf, chunkRange.first, chunkRange.last, patterns[j], processedPatterns[j])
       } else {
-        valueNotFound++
+        i
       }
-    } else {
-      keyNotAnAttribute++
+      if (p == -1) {
+        allValuesMatch = false
+        break
+      }
+
+      val actualValue = getAttributeValue(buf, p)
+      if (actualValue == null) {
+        valueNotFound++
+        break
+      }
+
+      if (matches(key, actualValue.text)) {
+        chunkRange = findChunk(buf, actualValue.start, actualValue.end)
+      } else {
+        allValuesMatch = false
+        break
+      }
     }
 
-    i = searchBytes(buf, nextSearchPos, buf.limit(), pattern, processedPattern)
+    if (chunkRange != null) {
+      if (allValuesMatch) {
+        val chunk = substring(buf, chunkRange.first, chunkRange.last)
+        result.add(chunk)
+      }
+      nextSearchPos = chunkRange.last
+    }
+
+    i = searchBytes(buf, nextSearchPos, buf.limit(), patterns[0], processedPatterns[0])
   }
 
   println(path)
   println("File size: $size")
-  println("Key: $key")
+  println("Keys: $keys")
   println("Time taken: ${System.currentTimeMillis() - start}")
   println("Values checked: $checked")
   println("Matches: ${result.size}")
   println("Misses: ${checked - result.size}")
-  println("Places where 'key' was not a string attribute: $keyNotAnAttribute")
-  println("Places where the value of the string attribute 'key' could not found: $valueNotFound")
+  println("Times a chunk was searched again for another key-value pair: $chunksSearchedAgain")
+  println("Places where 'key' was not a valid string attribute: $valueNotFound")
 
   return result
 }
@@ -237,7 +286,7 @@ fun runParseXML(path: String, key: String?, value: String): List<String> {
     var nextSearchPos = i + pattern.size
 
     val chunk = extractChunk(buf, i, i)
-    if (key == null || isAttributeEquals(rootElement, chunk.text, key, value)) {
+    if (key == null || isXMLAttributeEquals(rootElement, chunk.text, key, value)) {
       result.add(chunk.text)
       nextSearchPos = chunk.end
     }
@@ -335,7 +384,7 @@ class SearchVerticle : CoroutineVerticle() {
 // TODO caveat: if file is not well formatted we might search until the end (e.g. when looking for the end of a tag or chunk)
 suspend fun main() {
   val vertx = Vertx.vertx()
-  // vertx.deployVerticle(SearchVerticle())
+  // vertx.deployVerticle(SearchVerticle()).await()
 
   val path = "/Users/mkraemer/code/ogc3dc/DA_WISE_GML_enhanced/DA12_3D_Buildings_Merged.gml"
   // should yield 1 chunk
@@ -365,6 +414,26 @@ suspend fun main() {
     v.toDoubleOrNull()?.let { latitude ->
       latitude in 40.768548..40.768549
     } ?: false
+  }
+
+  run(path, "latitude") { v ->
+    v.toDoubleOrNull()?.let { latitude ->
+      latitude in 40.767..40.769
+    } ?: false
+  }
+
+  run(path, listOf("latitude", "longitude", "address")) { k, v ->
+    if (k == "address") {
+      v == "1 Columbus Circle"
+    } else {
+      v.toDoubleOrNull()?.let { parsedValue ->
+        if (k == "latitude") {
+          parsedValue in 40.7684..40.7686
+        } else {
+          parsedValue in -73.984..-73.982
+        }
+      } ?: false
+    }
   }
 
   // numeric attributes:
