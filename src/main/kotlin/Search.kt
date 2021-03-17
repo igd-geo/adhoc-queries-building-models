@@ -177,6 +177,7 @@ fun run(path: String, key: String, matches: (String) -> Boolean): List<String> {
         val nextTag = findNextTag(buf, nts)
         if (nextTag.text == "gen:value") {
           valueStart = nextTag.end
+          break
         } else if (nextTag.text == "/gen:stringAttribute") {
           break
         }
