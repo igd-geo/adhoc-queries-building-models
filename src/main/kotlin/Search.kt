@@ -282,8 +282,8 @@ class SearchVerticle : CoroutineVerticle() {
         } else if (minValue == null && maxValue == null && value == null) {
           response.setStatusCode(400).end("Missing value")
         } else {
-          val nMinValue = minValue?.toInt()
-          val nMaxValue = maxValue?.toInt()
+          val nMinValue = minValue?.toDouble()
+          val nMaxValue = maxValue?.toDouble()
 
           val path = "/Users/mkraemer/code/ogc3dc/DA_WISE_GML_enhanced/"
           val fs = vertx.fileSystem()
@@ -302,7 +302,7 @@ class SearchVerticle : CoroutineVerticle() {
                   runParseXML(f, null, value)
                 } else if (nMinValue != null && nMaxValue != null) {
                   run(f, key) {
-                    it.toIntOrNull()?.let { actualValue ->
+                    it.toDoubleOrNull()?.let { actualValue ->
                       actualValue in nMinValue..nMaxValue
                     } ?: false
                   }
@@ -349,6 +349,21 @@ suspend fun main() {
   run(path, "zipcode") { v ->
     v.toIntOrNull()?.let { zipcode ->
       zipcode in 10018..10020
+    } ?: false
+  }
+
+  run(path, "numfloors") { v ->
+    v.toDoubleOrNull()?.let { floors ->
+      floors in 1.0..3.0
+    } ?: false
+  }
+
+  // takes a lot longer because the attribute name is very short
+  run(path, "cd", "104")
+
+  run(path, "latitude") { v ->
+    v.toDoubleOrNull()?.let { latitude ->
+      latitude in 40.768548..40.768549
     } ?: false
   }
 
