@@ -21,6 +21,10 @@ val XML_FACTORY = SMInputFactory(InputFactoryImpl())
 const val DEFAULT_WARMUP_RUNS = 2
 const val DEFAULT_BENCH_RUNS = 5
 
+const val NAMESPACE_GML = "http://www.opengis.net/gml"
+const val NAMESPACE_CITYGML = "http://www.opengis.net/citygml/2.0"
+const val NAMESPACE_GENERICS = "http://www.opengis.net/citygml/generics/2.0"
+
 var runType = "BENCH"
 var run = 0
 var maxRuns = 10
@@ -117,9 +121,25 @@ fun readRootElement(buf: MappedByteBuffer): String {
   return ""
 }
 
-fun isXMLAttributeEquals(rootElement: String, chunk: String, key: String, value: String): Boolean {
+fun extractNamespaces(rootElement: String): Map<String, String> {
+  val rootCursor = XML_FACTORY.rootElementCursor(StringReader(rootElement))
+  rootCursor.advance()
+  val result = mutableMapOf<String, String>()
+  for (i in 0 until rootCursor.streamReader.namespaceCount) {
+    result[rootCursor.streamReader.getNamespaceURI(i)] =
+        rootCursor.streamReader.getNamespacePrefix(i)
+  }
+  return result
+}
+
+fun getNamespacePrefix(namespaceURI: String, namespaces: Map<String, String>): String =
+    namespaces[namespaceURI]?.let { if (it.isNotEmpty()) "$it:" else it } ?: ""
+
+fun isXMLAttributeEquals(rootElement: String, chunk: String, key: String, value: String,
+    namespaces: Map<String, String>): Boolean {
+  val cityGMLNamespacePrefix = getNamespacePrefix(NAMESPACE_CITYGML, namespaces)
   val rootElementReader = StringReader(rootElement)
-  val endElementReader = StringReader("</core:CityModel>")
+  val endElementReader = StringReader("</${cityGMLNamespacePrefix}CityModel>")
   val chunkReader = StringReader(chunk)
   val rootCursor = XML_FACTORY.rootElementCursor(SequenceReader(rootElementReader, chunkReader, endElementReader))
   rootCursor.advance()
@@ -155,18 +175,18 @@ fun isXMLAttributeEquals(rootElement: String, chunk: String, key: String, value:
   return false
 }
 
-fun getAttributeValue(buf: MappedByteBuffer, i: Int): Substring? {
+fun getAttributeValue(buf: MappedByteBuffer, i: Int, genNamespacePrefix: String): Substring? {
   val tagStart = lastIndexOf(buf, i, "<")
-  if (startsWith(buf, tagStart, "<gen:stringAttribute ")) { // TODO support other namespaces
+  if (startsWith(buf, tagStart, "<${genNamespacePrefix}stringAttribute ")) { // TODO support other namespaces
     val tagEnd = indexOf(buf, i, ">")
     var nts = tagEnd
     var valueStart = -1
     while (valueStart < 0) {
       val nextTag = findNextTag(buf, nts)
-      if (nextTag.text == "gen:value") {
+      if (nextTag.text == "${genNamespacePrefix}value") {
         valueStart = nextTag.end
         break
-      } else if (nextTag.text == "/gen:stringAttribute") {
+      } else if (nextTag.text == "/${genNamespacePrefix}stringAttribute") {
         break
       }
       nts = nextTag.end
@@ -236,18 +256,22 @@ fun findNextTag(buf: MappedByteBuffer, start: Int): Substring {
   return Substring(s, e, sb.toString())
 }
 
-fun findChunk(buf: MappedByteBuffer, first: Int, last: Int): IntRange {
-  val startStr = "<core:cityObjectMember"
+fun findChunk(buf: MappedByteBuffer, first: Int, last: Int,
+    namespaces: Map<String, String>): IntRange {
+  val namespacePrefix = getNamespacePrefix(NAMESPACE_CITYGML, namespaces)
+
+  val startStr = "<${namespacePrefix}cityObjectMember"
   val s = lastIndexOf(buf, first, startStr)
 
-  val endStr = "/core:cityObjectMember>"
+  val endStr = "/${namespacePrefix}cityObjectMember>"
   val e = indexOf(buf, last, endStr) + endStr.length
 
   return s..e
 }
 
-fun extractChunk(buf: MappedByteBuffer, first: Int, last: Int): Substring {
-  val r = findChunk(buf, first, last)
+fun extractChunk(buf: MappedByteBuffer, first: Int, last: Int,
+    namespaces: Map<String, String>): Substring {
+  val r = findChunk(buf, first, last, namespaces)
   return Substring(r.first, r.last, substring(buf, r.first, r.last))
 }
 
@@ -272,6 +296,9 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
   val size = channel.size().coerceAtMost(Int.MAX_VALUE.toLong() - 100) // TODO 2GB MAX!
   val buf = channel.map(FileChannel.MapMode.READ_ONLY, 0, size)
 
+  val rootElement = readRootElement(buf)
+  val namespaces = extractNamespaces(rootElement)
+
   // process keys
   val patterns = keys.map { """"$it"""".toByteArray() }
   val processedPatterns = patterns.map { processBytes(it) }
@@ -283,6 +310,7 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
   val matches = mutableListOf<String>()
 
   if (keys.isNotEmpty()) {
+    val genNamespacePrefix = getNamespacePrefix(NAMESPACE_GENERICS, namespaces)
     var i = searchBytes(buf, 0, buf.limit(), patterns[0], processedPatterns[0])
     while (i >= 0) {
       checked++
@@ -304,14 +332,14 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
           break
         }
 
-        val actualValue = getAttributeValue(buf, p)
+        val actualValue = getAttributeValue(buf, p, genNamespacePrefix)
         if (actualValue == null) {
           valueNotFound++
           break
         }
 
         if (matcher(key, actualValue.text)) {
-          chunkRange = findChunk(buf, actualValue.start, actualValue.end)
+          chunkRange = findChunk(buf, actualValue.start, actualValue.end, namespaces)
         } else {
           allValuesMatch = false
           break
@@ -330,7 +358,8 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
     }
   } else if (bbox != null) {
     // no keys - just look for bounding box
-    val posListPattern = "<gml:posList".toByteArray()
+    val gmlNamespacePrefix = getNamespacePrefix(NAMESPACE_GML, namespaces)
+    val posListPattern = "<${gmlNamespacePrefix}posList".toByteArray()
     val processedPosListPattern = processBytes(posListPattern)
     var i = searchBytes(buf, 0, buf.limit(), posListPattern, processedPosListPattern)
     while (i >= 0) {
@@ -339,7 +368,7 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
 
       val intersectsPos = intersectsPosList(buf, i, bbox)
       if (intersectsPos != -1) {
-        val chunkRange = findChunk(buf, i, intersectsPos)
+        val chunkRange = findChunk(buf, i, intersectsPos, namespaces)
         val chunk = substring(buf, chunkRange.first, chunkRange.last)
         checked++
         matches.add(chunk)
@@ -369,6 +398,7 @@ fun runParseXML(path: String, key: String?, value: String): SearchResult {
   val buf = channel.map(FileChannel.MapMode.READ_ONLY, 0, size)
 
   val rootElement = readRootElement(buf)
+  val namespaces = extractNamespaces(rootElement)
 
   var checked = 0
   val pattern = value.toByteArray()
@@ -379,8 +409,8 @@ fun runParseXML(path: String, key: String?, value: String): SearchResult {
     checked++
     var nextSearchPos = i + pattern.size
 
-    val chunk = extractChunk(buf, i, i)
-    if (key == null || isXMLAttributeEquals(rootElement, chunk.text, key, value)) {
+    val chunk = extractChunk(buf, i, i, namespaces)
+    if (key == null || isXMLAttributeEquals(rootElement, chunk.text, key, value, namespaces)) {
       matches.add(chunk.text)
       nextSearchPos = chunk.end
     }
