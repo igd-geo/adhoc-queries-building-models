@@ -6,7 +6,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
-import org.apache.commons.io.input.SequenceReader
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics
 import org.codehaus.staxmate.SMInputFactory
 import java.io.File
@@ -148,44 +147,15 @@ fun extractNamespacePrefixes(rootElement: String): Map<Namespace, String> {
   return result
 }
 
-fun isXMLAttributeEquals(rootElement: String, chunk: String, key: String, value: String,
-    namespaces: Map<Namespace, String>): Boolean {
-  val cityGMLNamespacePrefix = namespaces[Namespace.CITYGML] ?: ""
-  val rootElementReader = StringReader(rootElement)
-  val endElementReader = StringReader("</${cityGMLNamespacePrefix}CityModel>")
-  val chunkReader = StringReader(chunk)
-  val rootCursor = XML_FACTORY.rootElementCursor(SequenceReader(rootElementReader, chunkReader, endElementReader))
-  rootCursor.advance()
-
-  val rootChildCursor = rootCursor.childElementCursor()
-  while (rootChildCursor.next != null) {
-    if (rootChildCursor.localName == "cityObjectMember") {
-      val buildingCursor = rootChildCursor.childElementCursor()
-      while (buildingCursor.next != null) {
-        if (buildingCursor.localName == "Building") {
-          val attributeCursor = buildingCursor.childElementCursor()
-          while (attributeCursor.next != null) {
-            if (attributeCursor.localName == "stringAttribute") {
-              if (attributeCursor.getAttrValue("name") == key) {
-                val valueCursor = attributeCursor.childElementCursor()
-                while (valueCursor.next != null) {
-                  if (valueCursor.localName == "value") {
-                    if (valueCursor.elemStringValue.contains(value)) {
-                      return true
-                    }
-                  }
-                }
-                // we found the attribute but the value did not match
-                return false
-              }
-            }
-          }
-        }
-      }
-    }
+fun getAttributeKey(buf: MappedByteBuffer, i: Int, genNamespacePrefix: String): Substring? {
+  val tagStart = lastIndexOf(buf, i, "<")
+  if (startsWith(buf, tagStart, "<${genNamespacePrefix}value")) {
+    val stringAttributeStart = lastIndexOf(buf, tagStart, "<${genNamespacePrefix}stringAttribute")
+    val nameStart = indexOf(buf, stringAttributeStart, "name=\"")
+    val nameEnd = indexOf(buf, nameStart + 6, "\"")
+    return Substring(nameStart + 6, nameEnd, substring(buf, nameStart + 6, nameEnd))
   }
-
-  return false
+  return null
 }
 
 fun getAttributeValue(buf: MappedByteBuffer, i: Int, genNamespacePrefix: String): Substring? {
@@ -398,9 +368,8 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
       chunksSearchedAgain = chunksSearchedAgain, valueNotFound = valueNotFound)
 }
 
-// strategy: find 'value' in text, get chunk around it, parse chunk with XML
-// parser, finally compare attribute value
-fun runParseXML(path: String, key: String?, value: String): SearchResult {
+// strategy: find 'value' in text, compare key, get chunk around it
+fun runByValue(path: String, key: String?, value: String): SearchResult {
   log(path)
 
   val start = System.currentTimeMillis()
@@ -423,8 +392,8 @@ fun runParseXML(path: String, key: String?, value: String): SearchResult {
     checked++
     var nextSearchPos = i + pattern.size
 
-    val chunk = extractChunk(buf, i, i, namespaces)
-    if (key == null || isXMLAttributeEquals(rootElement, chunk.text, key, value, namespaces)) {
+    val chunk = extractChunk(buf, i, i, namespacePrefixes)
+    if (key == null || getAttributeKey(buf, i, genNamespacePrefix)?.text == key) {
       matches.add(chunk.text)
       nextSearchPos = chunk.end
     }
@@ -561,7 +530,7 @@ suspend fun main() {
     log("*** Free text")
     benchmark {
       singleOrMultiple { path ->
-        runParseXML(path, null, "Empire State Building")
+        runByValue(path, null, "Empire State Building")
       }
     }
   }
@@ -571,7 +540,7 @@ suspend fun main() {
     log("*** Key & value (search by value)")
     benchmark {
       singleOrMultiple { path ->
-        runParseXML(path, "ownername", "Empire State Building")
+        runByValue(path, "ownername", "Empire State Building")
       }
     }
   }
@@ -590,7 +559,7 @@ suspend fun main() {
     log("*** Zip code 10019 (search by value)")
     benchmark {
       singleOrMultiple { path ->
-        runParseXML(path, "zipcode", "10019")
+        runByValue(path, "zipcode", "10019")
       }
     }
   }
