@@ -562,6 +562,19 @@ suspend fun main() {
   }
 
   if (test == 6) {
+    log("*** Number of floors >= 4")
+    benchmark {
+      singleOrMultiple { path ->
+        run(path, "numfloors") { v ->
+          v.toDoubleOrNull()?.let { floors ->
+            floors >= 4.0
+          } ?: false
+        }
+      }
+    }
+  }
+
+  if (test == 7) {
     log("*** Zip code range 10018..10020")
     benchmark {
       singleOrMultiple { path ->
@@ -574,56 +587,26 @@ suspend fun main() {
     }
   }
 
-  if (test == 7) {
-    log("*** Number of floors range 1..3")
-    benchmark {
-      singleOrMultiple { path ->
-        run(path, "numfloors") { v ->
-          v.toDoubleOrNull()?.let { floors ->
-            floors in 1.0..3.0
-          } ?: false
-        }
-      }
-    }
-  }
-
-  // takes considerably longer because the attribute name is very short
+  // bldgclass = Factory
   if (test == 8) {
-    log("*** Very short key `cd`")
+    log("*** Building class `bldgclass` starts with `F` (Factory)")
     benchmark {
       singleOrMultiple { path ->
-        run(path, "cd", "104")
-      }
-    }
-  }
-
-  if (test == 9) {
-    log("*** Latitude precise range 40.768548..40.768549")
-    benchmark {
-      singleOrMultiple { path ->
-        run(path, "latitude") { v ->
-          v.toDoubleOrNull()?.let { latitude ->
-            latitude in 40.768548..40.768549
-          } ?: false
-        }
-      }
-    }
-  }
-
-  if (test == 10) {
-    log("*** Latitude range 40.767..40.769")
-    benchmark {
-      singleOrMultiple { path ->
-        run(path, "latitude") { v ->
-          v.toDoubleOrNull()?.let { latitude ->
-            latitude in 40.767..40.769
-          } ?: false
-        }
+        run(path, "bldgclass") { it.startsWith("F") }
       }
     }
   }
 
   if (test == 11) {
+    log("*** Bounding box")
+    benchmark {
+      singleOrMultiple { path ->
+        run(path, emptyList(), BoundingBox(996800.0, 18600.0, 996900.0, 18700.0)) { _, _ -> true }
+      }
+    }
+  }
+
+  if (test == 12) {
     log("*** latitude AND longitude AND address")
     benchmark {
       singleOrMultiple { path ->
@@ -640,15 +623,6 @@ suspend fun main() {
             } ?: false
           }
         }
-      }
-    }
-  }
-
-  if (test == 12) {
-    log("*** Bounding box")
-    benchmark {
-      singleOrMultiple { path ->
-        run(path, emptyList(), BoundingBox(996800.0, 18600.0, 996900.0, 18700.0)) { _, _ -> true }
       }
     }
   }
