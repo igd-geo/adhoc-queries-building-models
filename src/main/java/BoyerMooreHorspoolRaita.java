@@ -26,7 +26,6 @@
  *
  */
 
-import java.nio.MappedByteBuffer;
 import java.util.Arrays;
 
 /*
@@ -34,8 +33,8 @@ import java.util.Arrays;
  * This is a modified version of com.eaio.stringsearch.BoyerMooreHorspoolRaita
  * from https://github.com/elefana/stringsearch released under the MIT license.
  *
- * This modified version accepts MappedByteBuffers as text and does not depend
- * on other classes.
+ * This modified version accepts `FileBuffer` objects as text and does not
+ * depend on other classes.
  ******************************************************************************
  */
 
@@ -86,22 +85,22 @@ public class BoyerMooreHorspoolRaita {
         return skip;
     }
 
-    public static int searchBytes(MappedByteBuffer text, int textStart, int textEnd,
+    public static long searchBytes(FileBuffer text, long textStart, long textEnd,
             byte[] pattern, int[] processedPattern) {
         
         // Unrolled fast paths for patterns of length 1 and 2. Suggested by someone who doesn't want to be named.
         
         if (pattern.length == 1) {
-            final int nLimit = Math.min(text.limit(), textEnd);
-            for (int n = textStart; n < nLimit; n++) {
+            final long nLimit = Math.min(text.getSize(), textEnd);
+            for (long n = textStart; n < nLimit; n++) {
                 if (text.get(n) == pattern[0])
                     return n;
             }
             return -1;
         }
         else if (pattern.length == 2) {
-            final int nLimit = Math.min(text.limit(), textEnd) - 1;
-            for (int n = textStart; n < nLimit; n++) {
+            final long nLimit = Math.min(text.getSize(), textEnd) - 1;
+            for (long n = textStart; n < nLimit; n++) {
                 if (text.get(n) == pattern[0]) {
                     if (text.get(n + 1) == pattern[1])
                         return n;
@@ -110,7 +109,7 @@ public class BoyerMooreHorspoolRaita {
             return -1;
         }
 
-        int i, j, k, mMinusOne;
+        long i, j, k, mMinusOne;
         byte last, first;
 
         i = pattern.length - 1;
@@ -128,7 +127,7 @@ public class BoyerMooreHorspoolRaita {
                 k = i - 1;
                 j = mMinusOne;
 
-                while (k > -1 && j > -1 && text.get(k) == pattern[j]) {
+                while (k > -1 && j > -1 && text.get(k) == pattern[(int)j]) {
                     --k;
                     --j;
                 }

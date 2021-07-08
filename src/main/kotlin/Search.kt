@@ -9,10 +9,7 @@ import kotlinx.coroutines.withContext
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics
 import org.codehaus.staxmate.SMInputFactory
 import java.io.File
-import java.io.RandomAccessFile
 import java.io.StringReader
-import java.nio.MappedByteBuffer
-import java.nio.channels.FileChannel
 import kotlin.math.roundToInt
 
 val XML_FACTORY = SMInputFactory(InputFactoryImpl())
@@ -51,7 +48,7 @@ data class SearchResult(val matches: List<String>, val filesize: Long,
     val chunksChecked: Int, val posListsChecked: Int = 0,
     val chunksSearchedAgain: Int = 0, val valueNotFound: Int = 0)
 
-data class Substring(val start: Int, val end: Int, val text: String)
+data class Substring(val start: Long, val end: Long, val text: String)
 data class BoundingBox(val minX: Double, val minY: Double, val maxX: Double, val maxY: Double) {
   fun contains(other: BoundingBox): Boolean {
     val rx = minX..maxX
@@ -64,8 +61,8 @@ data class BoundingBox(val minX: Double, val minY: Double, val maxX: Double, val
   }
 }
 
-fun indexOf(haystack: MappedByteBuffer, offset: Int, needle: String): Int {
-  for (i in offset until haystack.limit() - needle.length) {
+fun indexOf(haystack: FileBuffer, offset: Long, needle: String): Long {
+  for (i in offset until haystack.size - needle.length) {
     for (j in needle.indices) {
       val c = haystack[i + j].toInt().toChar()
       if (c != needle[j]) {
@@ -79,7 +76,7 @@ fun indexOf(haystack: MappedByteBuffer, offset: Int, needle: String): Int {
   return -1
 }
 
-fun lastIndexOf(haystack: MappedByteBuffer, offset: Int, needle: String): Int {
+fun lastIndexOf(haystack: FileBuffer, offset: Long, needle: String): Long {
   for (i in offset downTo 0) {
     for (j in needle.indices) {
       val c = haystack[i + j].toInt().toChar()
@@ -94,27 +91,27 @@ fun lastIndexOf(haystack: MappedByteBuffer, offset: Int, needle: String): Int {
   return -1
 }
 
-fun substring(buf: MappedByteBuffer, start: Int, end: Int): String {
-  val tmp = ByteArray(end - start)
+fun substring(buf: FileBuffer, start: Long, end: Long): String {
+  val tmp = ByteArray((end - start).toInt())
   for (j in start until end) {
-    tmp[j - start] = buf[j]
+    tmp[(j - start).toInt()] = buf[j]
   }
   return String(tmp)
 }
 
-fun startsWith(buf: MappedByteBuffer, start: Int, needle: String): Boolean {
+fun startsWith(buf: FileBuffer, start: Long, needle: String): Boolean {
   for (j in start until start + needle.length) {
-    if (j >= buf.limit() || buf[j].toInt().toChar() != needle[j - start]) {
+    if (j >= buf.size || buf[j].toInt().toChar() != needle[(j - start).toInt()]) {
       return false
     }
   }
   return true
 }
 
-fun readRootElement(buf: MappedByteBuffer): String {
-  var start = -1
-  for (i in 0 until buf.limit() - 1) {
-    if (start == -1) {
+fun readRootElement(buf: FileBuffer): String {
+  var start = -1L
+  for (i in 0 until buf.size - 1) {
+    if (start == -1L) {
       if (buf[i].toInt().toChar() == '<' && buf[i + 1].toInt().toChar() != '?') {
         start = i
       }
@@ -147,7 +144,7 @@ fun extractNamespacePrefixes(rootElement: String): Map<Namespace, String> {
   return result
 }
 
-fun getAttributeKey(buf: MappedByteBuffer, i: Int, genNamespacePrefix: String): Substring? {
+fun getAttributeKey(buf: FileBuffer, i: Long, genNamespacePrefix: String): Substring? {
   val tagStart = lastIndexOf(buf, i, "<")
   if (startsWith(buf, tagStart, "<${genNamespacePrefix}value")) {
     val stringAttributeStart = lastIndexOf(buf, tagStart, "<${genNamespacePrefix}stringAttribute")
@@ -158,13 +155,13 @@ fun getAttributeKey(buf: MappedByteBuffer, i: Int, genNamespacePrefix: String): 
   return null
 }
 
-fun getAttributeValue(buf: MappedByteBuffer, i: Int, genNamespacePrefix: String): Substring? {
+fun getAttributeValue(buf: FileBuffer, i: Long, genNamespacePrefix: String): Substring? {
   val tagStart = lastIndexOf(buf, i, "<")
   if (startsWith(buf, tagStart, "<${genNamespacePrefix}stringAttribute ")) {
     val tagEnd = indexOf(buf, i, ">")
     var nts = tagEnd
-    var valueStart = -1
-    while (valueStart < 0) {
+    var valueStart = -1L
+    while (valueStart < 0L) {
       val nextTag = findNextTag(buf, nts)
       if (nextTag.text == "${genNamespacePrefix}value") {
         valueStart = nextTag.end
@@ -175,7 +172,7 @@ fun getAttributeValue(buf: MappedByteBuffer, i: Int, genNamespacePrefix: String)
       nts = nextTag.end
     }
 
-    return if (valueStart >= 0) {
+    return if (valueStart >= 0L) {
       val valueEnd = indexOf(buf, valueStart, "<")
       Substring(valueStart + 1, valueEnd, substring(buf, valueStart + 1, valueEnd))
     } else {
@@ -185,7 +182,7 @@ fun getAttributeValue(buf: MappedByteBuffer, i: Int, genNamespacePrefix: String)
   return null
 }
 
-fun intersectsPosList(buf: MappedByteBuffer, i: Int, bbox: BoundingBox): Int {
+fun intersectsPosList(buf: FileBuffer, i: Long, bbox: BoundingBox): Long {
   val posListStart = indexOf(buf, i, ">") + 1
 
   val sb = StringBuilder()
@@ -193,7 +190,7 @@ fun intersectsPosList(buf: MappedByteBuffer, i: Int, bbox: BoundingBox): Int {
   var n = 0
   var x = 0.0
   var y = 0.0
-  while (j < buf.limit()) {
+  while (j < buf.size) {
     // look for end of next number
     val c = buf[j].toInt().toChar()
     if (c == ' ' || c == '<') {
@@ -218,7 +215,7 @@ fun intersectsPosList(buf: MappedByteBuffer, i: Int, bbox: BoundingBox): Int {
 
       sb.clear()
       // skip other spaces
-      while (j < buf.limit() && buf[j].toInt().toChar() == ' ') j++
+      while (j < buf.size && buf[j].toInt().toChar() == ' ') j++
     } else {
       sb.append(c)
     }
@@ -228,19 +225,19 @@ fun intersectsPosList(buf: MappedByteBuffer, i: Int, bbox: BoundingBox): Int {
   return -1
 }
 
-fun findNextTag(buf: MappedByteBuffer, start: Int): Substring {
+fun findNextTag(buf: FileBuffer, start: Long): Substring {
   val s = indexOf(buf, start, "<")
   val sb = StringBuilder()
   var e = s + 1
-  while (e < buf.limit() && buf[e].toInt().toChar() != '>') {
+  while (e < buf.size && buf[e].toInt().toChar() != '>') {
     sb.append(buf[e].toInt().toChar())
     e++
   }
   return Substring(s, e, sb.toString())
 }
 
-fun findChunk(buf: MappedByteBuffer, first: Int, last: Int,
-    namespacePrefixes: Map<Namespace, String>): IntRange {
+fun findChunk(buf: FileBuffer, first: Long, last: Long,
+    namespacePrefixes: Map<Namespace, String>): LongRange {
   val namespacePrefix = namespacePrefixes[Namespace.CITYGML] ?: ""
 
   val startStr = "<${namespacePrefix}cityObjectMember"
@@ -252,7 +249,7 @@ fun findChunk(buf: MappedByteBuffer, first: Int, last: Int,
   return s..e
 }
 
-fun extractChunk(buf: MappedByteBuffer, first: Int, last: Int,
+fun extractChunk(buf: FileBuffer, first: Long, last: Long,
     namespacePrefixes: Map<Namespace, String>): Substring {
   val r = findChunk(buf, first, last, namespacePrefixes)
   return Substring(r.first, r.last, substring(buf, r.first, r.last))
@@ -274,10 +271,7 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
 
   val start = System.currentTimeMillis()
 
-  val raf = RandomAccessFile(path, "r")
-  val channel = raf.channel
-  val size = channel.size().coerceAtMost(Int.MAX_VALUE.toLong() - 100) // TODO 2GB MAX!
-  val buf = channel.map(FileChannel.MapMode.READ_ONLY, 0, size)
+  val buf = FileBuffer(path)
 
   val rootElement = readRootElement(buf)
   val namespacePrefixes = extractNamespacePrefixes(rootElement)
@@ -294,13 +288,13 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
 
   if (keys.isNotEmpty()) {
     val genNamespacePrefix = namespacePrefixes[Namespace.GENERICS] ?: ""
-    var i = searchBytes(buf, 0, buf.limit(), patterns[0], processedPatterns[0])
+    var i = searchBytes(buf, 0, buf.size, patterns[0], processedPatterns[0])
     while (i >= 0) {
       checked++
       var nextSearchPos = i + patterns[0].size
 
       var allValuesMatch = true
-      var chunkRange: IntRange? = null
+      var chunkRange: LongRange? = null
       for ((j, key) in keys.withIndex()) {
         val p = if (chunkRange != null) {
           // We already found a chunk (from searching for the first key). Search
@@ -310,7 +304,7 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
         } else {
           i
         }
-        if (p == -1) {
+        if (p == -1L) {
           allValuesMatch = false
           break
         }
@@ -337,20 +331,20 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
         nextSearchPos = chunkRange.last
       }
 
-      i = searchBytes(buf, nextSearchPos, buf.limit(), patterns[0], processedPatterns[0])
+      i = searchBytes(buf, nextSearchPos, buf.size, patterns[0], processedPatterns[0])
     }
   } else if (bbox != null) {
     // no keys - just look for bounding box
     val gmlNamespacePrefix = namespacePrefixes[Namespace.GML] ?: ""
     val posListPattern = "<${gmlNamespacePrefix}posList".toByteArray()
     val processedPosListPattern = processBytes(posListPattern)
-    var i = searchBytes(buf, 0, buf.limit(), posListPattern, processedPosListPattern)
+    var i = searchBytes(buf, 0, buf.size, posListPattern, processedPosListPattern)
     while (i >= 0) {
       posListsChecked++
       var nextSearchPos = i + posListPattern.size
 
       val intersectsPos = intersectsPosList(buf, i, bbox)
-      if (intersectsPos != -1) {
+      if (intersectsPos != -1L) {
         val chunkRange = findChunk(buf, i, intersectsPos, namespacePrefixes)
         val chunk = substring(buf, chunkRange.first, chunkRange.last)
         checked++
@@ -358,12 +352,12 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
         nextSearchPos = chunkRange.last
       }
 
-      i = searchBytes(buf, nextSearchPos, buf.limit(), posListPattern, processedPosListPattern)
+      i = searchBytes(buf, nextSearchPos, buf.size, posListPattern, processedPosListPattern)
     }
   }
 
   val duration = System.currentTimeMillis() - start
-  return SearchResult(matches = matches, filesize = size, keys = keys, bbox = bbox,
+  return SearchResult(matches = matches, filesize = buf.size, keys = keys, bbox = bbox,
       duration = duration, chunksChecked = checked, posListsChecked = posListsChecked,
       chunksSearchedAgain = chunksSearchedAgain, valueNotFound = valueNotFound)
 }
@@ -374,10 +368,7 @@ fun runByValue(path: String, key: String?, value: String): SearchResult {
 
   val start = System.currentTimeMillis()
 
-  val raf = RandomAccessFile(path, "r")
-  val channel = raf.channel
-  val size = channel.size().coerceAtMost(Int.MAX_VALUE.toLong() - 100) // TODO 2GB MAX!
-  val buf = channel.map(FileChannel.MapMode.READ_ONLY, 0, size)
+  val buf = FileBuffer(path)
 
   val rootElement = readRootElement(buf)
   val namespacePrefixes = extractNamespacePrefixes(rootElement)
@@ -386,7 +377,7 @@ fun runByValue(path: String, key: String?, value: String): SearchResult {
   var checked = 0
   val pattern = value.toByteArray()
   val processedPattern = processBytes(pattern)
-  var i = searchBytes(buf, 0, buf.limit(), pattern, processedPattern)
+  var i = searchBytes(buf, 0, buf.size, pattern, processedPattern)
   val matches = mutableListOf<String>()
   while (i >= 0) {
     checked++
@@ -398,10 +389,10 @@ fun runByValue(path: String, key: String?, value: String): SearchResult {
       nextSearchPos = chunk.end
     }
 
-    i = searchBytes(buf, nextSearchPos, buf.limit(), pattern, processedPattern)
+    i = searchBytes(buf, nextSearchPos, buf.size, pattern, processedPattern)
   }
 
-  return SearchResult(matches, filesize = size, keys = if (key != null) listOf(key) else emptyList(),
+  return SearchResult(matches, filesize = buf.size, keys = if (key != null) listOf(key) else emptyList(),
       values = listOf(value), duration = System.currentTimeMillis() - start,
       chunksChecked = checked)
 }
@@ -521,10 +512,7 @@ suspend fun singleOrMultiple(single: Boolean = true, block: suspend (path: Strin
 
 // TODO caveat: only supports plain ASCII encoding, proper UTF-8 decoding might actually affect performance
 // TODO caveat: if file is not well formatted we might search until the end (e.g. when looking for the end of a tag or chunk)
-// TODO caveat: maximum size of a memory-mapped file is 2 GB
 suspend fun main() {
-  // TODO Mit throughput der Festplatte vergleichen
-
   val test = 1
   File(LOG_FILE).delete()
 
@@ -578,6 +566,19 @@ suspend fun main() {
   }
 
   if (test == 6) {
+    log("*** Number of floors >= 4")
+    benchmark {
+      singleOrMultiple { path ->
+        run(path, "numfloors") { v ->
+          v.toDoubleOrNull()?.let { floors ->
+            floors >= 4.0
+          } ?: false
+        }
+      }
+    }
+  }
+
+  if (test == 7) {
     log("*** Zip code range 10018..10020")
     benchmark {
       singleOrMultiple { path ->
@@ -590,69 +591,37 @@ suspend fun main() {
     }
   }
 
-  if (test == 7) {
-    log("*** Number of floors range 1..3")
-    benchmark {
-      singleOrMultiple { path ->
-        run(path, "numfloors") { v ->
-          v.toDoubleOrNull()?.let { floors ->
-            floors in 1.0..3.0
-          } ?: false
-        }
-      }
-    }
-  }
-
-  // takes considerably longer because the attribute name is very short
+  // bldgclass = Factory
   if (test == 8) {
-    log("*** Very short key `cd`")
+    log("*** Building class `bldgclass` starts with `F` (Factory)")
     benchmark {
       singleOrMultiple { path ->
-        run(path, "cd", "104")
+        run(path, "bldgclass") { it.startsWith("F") }
       }
     }
   }
 
   if (test == 9) {
-    log("*** Latitude precise range 40.768548..40.768549")
+    log("*** Bounding box")
     benchmark {
       singleOrMultiple { path ->
-        run(path, "latitude") { v ->
-          v.toDoubleOrNull()?.let { latitude ->
-            latitude in 40.768548..40.768549
-          } ?: false
-        }
+        run(path, emptyList(), BoundingBox(996800.0, 18600.0, 996900.0, 18700.0)) { _, _ -> true }
       }
     }
   }
 
   if (test == 10) {
-    log("*** Latitude range 40.767..40.769")
+    log("*** zipcode AND numfloors")
     benchmark {
       singleOrMultiple { path ->
-        run(path, "latitude") { v ->
-          v.toDoubleOrNull()?.let { latitude ->
-            latitude in 40.767..40.769
-          } ?: false
-        }
-      }
-    }
-  }
-
-  if (test == 11) {
-    log("*** latitude AND longitude AND address")
-    benchmark {
-      singleOrMultiple { path ->
-        run(path, listOf("latitude", "longitude", "address")) { k, v ->
-          if (k == "address") {
-            v == "1 Columbus Circle"
+        run(path, listOf("zipcode", "numfloors")) { k, v ->
+          if (k == "zipcode") {
+            v.toIntOrNull()?.let { zipcode ->
+              zipcode in 10018..10020
+            } ?: false
           } else {
-            v.toDoubleOrNull()?.let { parsedValue ->
-              if (k == "latitude") {
-                parsedValue in 40.7684..40.7686
-              } else {
-                parsedValue in -73.984..-73.982
-              }
+            v.toDoubleOrNull()?.let { floors ->
+              floors >= 4.0
             } ?: false
           }
         }
@@ -660,11 +629,21 @@ suspend fun main() {
     }
   }
 
-  if (test == 12) {
-    log("*** Bounding box")
+  if (test == 11) {
+    log("*** numfloors AND zipcode")
     benchmark {
       singleOrMultiple { path ->
-        run(path, emptyList(), BoundingBox(996800.0, 18600.0, 996900.0, 18700.0)) { _, _ -> true }
+        run(path, listOf("numfloors", "zipcode")) { k, v ->
+          if (k == "zipcode") {
+            v.toIntOrNull()?.let { zipcode ->
+              zipcode in 10018..10020
+            } ?: false
+          } else {
+            v.toDoubleOrNull()?.let { floors ->
+              floors >= 4.0
+            } ?: false
+          }
+        }
       }
     }
   }
