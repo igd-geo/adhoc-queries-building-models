@@ -412,7 +412,11 @@ suspend fun sync() = withContext(Dispatchers.IO) {
   if (code1 != 0) {
     throw RuntimeException("Could not run `sync'. Exit code $code1")
   }
-  val code2 = Runtime.getRuntime().exec("purge").waitFor()
+  val code2 = if (System.getProperty("os.name") == "Linux") {
+    Runtime.getRuntime().exec(arrayOf("/bin/sh", "-c", "echo 3 > /proc/sys/vm/drop_caches")).waitFor()
+  } else {
+    Runtime.getRuntime().exec("purge").waitFor()
+  }
   if (code2 != 0) {
     throw RuntimeException("Could not run `purge'. Exit code $code2. " +
         "`sudo' is required to run this application.")
