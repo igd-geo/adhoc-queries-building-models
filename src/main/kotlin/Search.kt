@@ -597,7 +597,7 @@ suspend fun main() {
     }
   }
 
-  if (test == 11) {
+  if (test == 9) {
     log("*** Bounding box")
     benchmark {
       singleOrMultiple { path ->
@@ -606,20 +606,37 @@ suspend fun main() {
     }
   }
 
-  if (test == 12) {
-    log("*** latitude AND longitude AND address")
+  if (test == 10) {
+    log("*** zipcode AND numfloors")
     benchmark {
       singleOrMultiple { path ->
-        run(path, listOf("latitude", "longitude", "address")) { k, v ->
-          if (k == "address") {
-            v == "1 Columbus Circle"
+        run(path, listOf("zipcode", "numfloors")) { k, v ->
+          if (k == "zipcode") {
+            v.toIntOrNull()?.let { zipcode ->
+              zipcode in 10018..10020
+            } ?: false
           } else {
-            v.toDoubleOrNull()?.let { parsedValue ->
-              if (k == "latitude") {
-                parsedValue in 40.7684..40.7686
-              } else {
-                parsedValue in -73.984..-73.982
-              }
+            v.toDoubleOrNull()?.let { floors ->
+              floors >= 4.0
+            } ?: false
+          }
+        }
+      }
+    }
+  }
+
+  if (test == 11) {
+    log("*** numfloors AND zipcode")
+    benchmark {
+      singleOrMultiple { path ->
+        run(path, listOf("numfloors", "zipcode")) { k, v ->
+          if (k == "zipcode") {
+            v.toIntOrNull()?.let { zipcode ->
+              zipcode in 10018..10020
+            } ?: false
+          } else {
+            v.toDoubleOrNull()?.let { floors ->
+              floors >= 4.0
             } ?: false
           }
         }
