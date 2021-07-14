@@ -658,4 +658,13 @@ suspend fun main() {
       }
     }
   }
+
+  if (test == 12) {
+    log("*** Bounding box (large)")
+    benchmark {
+      singleOrMultiple { path ->
+        run(path, emptyList(), BoundingBox(950000.0, 210000.0, 1000000.0, 220000.0)) { _, _ -> true }
+      }
+    }
+  }
 }
