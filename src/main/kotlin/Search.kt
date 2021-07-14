@@ -195,8 +195,13 @@ fun intersectsPosList(buf: FileBuffer, i: Long, bbox: BoundingBox): Long {
   while (j < buf.size && buf[j].toInt().toChar() == ' ') j++
 
   while (j < buf.size) {
-    // look for end of next number
     val c = buf[j].toInt().toChar()
+
+    if (c == '<' && sb.isBlank()) {
+      // we're at the end of the posList and did not find any more coordinates
+      break
+    }
+
     if (c == ' ' || c == '<') {
       when (n) {
         0 -> {
