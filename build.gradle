@@ -8,14 +8,14 @@ apply plugin: 'java'
 sourceCompatibility = '11'
 targetCompatibility = '11'
 
-mainClassName = "SearchKt"
+mainClassName = "MainKt"
 
 ext {
     vertxVersion = '4.0.3'
 }
 
 repositories {
-    jcenter()
+    mavenCentral()
 }
 
 dependencies {
@@ -24,6 +24,7 @@ dependencies {
     implementation 'com.fasterxml.staxmate:staxmate:2.4.0'
     implementation 'commons-io:commons-io:2.8.0'
     implementation 'org.apache.commons:commons-math3:3.6.1'
+    implementation("com.github.ajalt.clikt:clikt:3.2.0")
 }
 
 compileKotlin {

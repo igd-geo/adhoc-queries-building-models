@@ -29,12 +29,14 @@ enum class Namespace {
   GENERICS
 }
 
+var disableLog = false
 var runType = "BENCH"
 var run = 0
 var maxRuns = 10
 const val LOG_FILE = "out.log"
 
 fun log(msg: String) {
+  if (disableLog) return
   synchronized(LOG_FILE) {
     val line = "[$runType $run/$maxRuns] $msg\n"
     print(line)
@@ -108,6 +110,11 @@ fun startsWith(buf: FileBuffer, start: Long, needle: String): Boolean {
   return true
 }
 
+/**
+ * Get the tag name of the first tag.
+ * XXX <hello>world</hello>
+ * returns "hello"
+ */
 fun readRootElement(buf: FileBuffer): String {
   var start = -1L
   for (i in 0 until buf.size - 1) {
@@ -125,6 +132,9 @@ fun readRootElement(buf: FileBuffer): String {
   return ""
 }
 
+/**
+ * Get a map of the namespaces in Namespace.* to the URI defined in the [rootElement]
+ */
 fun extractNamespacePrefixes(rootElement: String): Map<Namespace, String> {
   val rootCursor = XML_FACTORY.rootElementCursor(StringReader(rootElement))
   rootCursor.advance()
@@ -412,6 +422,9 @@ fun runByValue(path: String, key: String?, value: String): SearchResult {
       chunksChecked = checked)
 }
 
+/**
+ * Clear cache.
+ */
 @Suppress("BlockingMethodInNonBlockingContext")
 suspend fun sync() = withContext(Dispatchers.IO) {
   val code1 = Runtime.getRuntime().exec("sync").waitFor()
@@ -429,6 +442,11 @@ suspend fun sync() = withContext(Dispatchers.IO) {
   }
 }
 
+/**
+ * Runs [warmupRuns] times the [block] for warmup.
+ * Afterwards [runs] times for benchmarking.
+ * Clears cache between each run.
+ */
 suspend fun benchmark(warmupRuns: Int = DEFAULT_WARMUP_RUNS, runs: Int = DEFAULT_BENCH_RUNS, block: suspend () -> Unit) {
   runType = "WARM"
   maxRuns = warmupRuns
@@ -487,17 +505,13 @@ suspend fun benchmark(warmupRuns: Int = DEFAULT_WARMUP_RUNS, runs: Int = DEFAULT
   log("-----")
 }
 
-suspend fun singleOrMultiple(single: Boolean = true, block: suspend (path: String) -> SearchResult) = coroutineScope {
-  val path = "/Users/mkraemer/code/ogc3dc/DA_WISE_GML_enhanced"
-  val files = if (single) {
-    listOf("DA12_3D_Buildings_Merged.gml")
-  } else {
-    File(path).list().toList()
-  }
-
+/**
+ * Runs [block] for each GML file in [files] in parallel.
+ */
+suspend fun singleOrMultiple(files: List<String>, block: suspend (path: String) -> SearchResult) = coroutineScope {
   val ds = files.map { f ->
     async {
-      block("$path/$f")
+      block(f)
     }
   }
   val results = ds.awaitAll()
@@ -523,152 +537,97 @@ suspend fun singleOrMultiple(single: Boolean = true, block: suspend (path: Strin
   log("Pos lists checked: $posListsChecked")
   log("Times a chunk was searched again for another key-value pair: $chunksSearchedAgain")
   log("Places where 'key' was not a valid string attribute: $valueNotFound")
+
+  return@coroutineScope results
 }
 
 // TODO caveat: only supports plain ASCII encoding, proper UTF-8 decoding might actually affect performance
 // TODO caveat: if file is not well formatted we might search until the end (e.g. when looking for the end of a tag or chunk)
-suspend fun main() {
-  val test = 1
+suspend fun runTest(test: Int, files: List<String>, benchmark: Boolean) {
   File(LOG_FILE).delete()
 
-  // look for free text without key
-  // should yield 1 chunk
-  if (test == 1) {
-    log("*** Free text")
-    benchmark {
-      singleOrMultiple { path ->
-        runByValue(path, null, "Empire State Building")
+  val testBlock: Pair<String, suspend (String) -> SearchResult> = when (test) {
+    1 -> Pair("*** Free text") { path ->
+      // look for free text without key
+      // should yield 1 chunk
+      runByValue(path, null, "Empire State Building")
+    }
+    2 -> Pair("*** Key & value (search by value)") { path ->
+      // should yield 1 chunk
+      runByValue(path, "ownername", "Empire State Building")
+    }
+    3 -> Pair("*** Key & value") { path ->
+      run(path, "ownername", "Empire State Building")
+    }
+    4 -> Pair("*** Zip code 10019 (search by value)") { path ->
+      // should yield 1179 chunks
+      runByValue(path, "zipcode", "10019")
+    }
+    5 -> Pair("*** Zip code 10019") { path ->
+      run(path, "zipcode", "10019")
+    }
+    6 -> Pair("*** Number of floors >= 4") { path ->
+      run(path, "numfloors") { v ->
+        v.toDoubleOrNull()?.let { floors ->
+          floors >= 4.0
+        } ?: false
       }
     }
-  }
-
-  // should yield 1 chunk
-  if (test == 2) {
-    log("*** Key & value (search by value)")
-    benchmark {
-      singleOrMultiple { path ->
-        runByValue(path, "ownername", "Empire State Building")
+    7 -> Pair("*** Zip code range 10018..10020") { path ->
+      run(path, "zipcode") { v ->
+        v.toIntOrNull()?.let { zipcode ->
+          zipcode in 10018..10020
+        } ?: false
       }
     }
-  }
-
-  if (test == 3) {
-    log("*** Key & value")
-    benchmark {
-      singleOrMultiple { path ->
-        run(path, "ownername", "Empire State Building")
-      }
+    8 -> Pair("*** Building class `bldgclass` starts with `F` (Factory)") { path ->
+      // bldgclass = Factory
+      run(path, "bldgclass") { it.startsWith("F") }
     }
-  }
-
-  // should yield 1179 chunks
-  if (test == 4) {
-    log("*** Zip code 10019 (search by value)")
-    benchmark {
-      singleOrMultiple { path ->
-        runByValue(path, "zipcode", "10019")
-      }
+    9 -> Pair("*** Bounding box") { path ->
+      run(path, emptyList(), BoundingBox(987700.0, 211100.0, 987900.0, 211300.0)) { _, _ -> true }
     }
-  }
-
-  if (test == 5) {
-    log("*** Zip code 10019")
-    benchmark {
-      singleOrMultiple { path ->
-        run(path, "zipcode", "10019")
-      }
-    }
-  }
-
-  if (test == 6) {
-    log("*** Number of floors >= 4")
-    benchmark {
-      singleOrMultiple { path ->
-        run(path, "numfloors") { v ->
+    10 -> Pair("*** zipcode AND numfloors") { path ->
+      run(path, listOf("zipcode", "numfloors")) { k, v ->
+        if (k == "zipcode") {
+          v.toIntOrNull()?.let { zipcode ->
+            zipcode in 10018..10020
+          } ?: false
+        } else {
           v.toDoubleOrNull()?.let { floors ->
             floors >= 4.0
           } ?: false
         }
       }
     }
-  }
-
-  if (test == 7) {
-    log("*** Zip code range 10018..10020")
-    benchmark {
-      singleOrMultiple { path ->
-        run(path, "zipcode") { v ->
+    11 -> Pair("*** numfloors AND zipcode") { path ->
+      run(path, listOf("numfloors", "zipcode")) { k, v ->
+        if (k == "zipcode") {
           v.toIntOrNull()?.let { zipcode ->
             zipcode in 10018..10020
+          } ?: false
+        } else {
+          v.toDoubleOrNull()?.let { floors ->
+            floors >= 4.0
           } ?: false
         }
       }
     }
+    12 -> Pair("*** Bounding box (large)") { path ->
+      run(path, emptyList(), BoundingBox(950000.0, 210000.0, 1000000.0, 220000.0)) { _, _ -> true }
+    }
+    else -> throw RuntimeException("Unknown test $test. Set a value between 1 and 12.")
   }
 
-  // bldgclass = Factory
-  if (test == 8) {
-    log("*** Building class `bldgclass` starts with `F` (Factory)")
+  if (benchmark) {
+    log(testBlock.first) // The "title" of the test.
     benchmark {
-      singleOrMultiple { path ->
-        run(path, "bldgclass") { it.startsWith("F") }
-      }
+      singleOrMultiple(files, testBlock.second)
     }
-  }
-
-  if (test == 9) {
-    log("*** Bounding box")
-    benchmark {
-      singleOrMultiple { path ->
-        run(path, emptyList(), BoundingBox(987700.0, 211100.0, 987900.0, 211300.0)) { _, _ -> true }
-      }
-    }
-  }
-
-  if (test == 10) {
-    log("*** zipcode AND numfloors")
-    benchmark {
-      singleOrMultiple { path ->
-        run(path, listOf("zipcode", "numfloors")) { k, v ->
-          if (k == "zipcode") {
-            v.toIntOrNull()?.let { zipcode ->
-              zipcode in 10018..10020
-            } ?: false
-          } else {
-            v.toDoubleOrNull()?.let { floors ->
-              floors >= 4.0
-            } ?: false
-          }
-        }
-      }
-    }
-  }
-
-  if (test == 11) {
-    log("*** numfloors AND zipcode")
-    benchmark {
-      singleOrMultiple { path ->
-        run(path, listOf("numfloors", "zipcode")) { k, v ->
-          if (k == "zipcode") {
-            v.toIntOrNull()?.let { zipcode ->
-              zipcode in 10018..10020
-            } ?: false
-          } else {
-            v.toDoubleOrNull()?.let { floors ->
-              floors >= 4.0
-            } ?: false
-          }
-        }
-      }
-    }
-  }
-
-  if (test == 12) {
-    log("*** Bounding box (large)")
-    benchmark {
-      singleOrMultiple { path ->
-        run(path, emptyList(), BoundingBox(950000.0, 210000.0, 1000000.0, 220000.0)) { _, _ -> true }
-      }
-    }
+  } else {
+    disableLog = true // We do not need log messages when only looking for the results.
+    singleOrMultiple(files, testBlock.second)
+      .flatMap { it.matches }
+      .forEach { println(it) }
   }
 }
