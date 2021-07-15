@@ -18,4 +18,6 @@ To run the program in benchmark mode, add the parameter `--benchmark`. You have 
 sudo ./gradlew run --args="--test 1 --input /home/hendrik/data/gml/new-york/DA_WISE_GML_enhanced/ --benchmark"
 ```
 
-The code was tested using Ubuntu and macOS.
+The code was tested using Ubuntu and macOS. It uses the Boyer Moore Horspool implementation with Raita's improvement from Johann Burkard licensed under the MIT license: https://github.com/elefana/stringsearch
+
+This project is licensed under the MIT license.
