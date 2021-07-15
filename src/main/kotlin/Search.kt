@@ -190,15 +190,31 @@ fun intersectsPosList(buf: FileBuffer, i: Long, bbox: BoundingBox): Long {
   var n = 0
   var x = 0.0
   var y = 0.0
+
+  // skip spaces at the beginning
+  while (j < buf.size && buf[j].toInt().toChar() == ' ') j++
+
   while (j < buf.size) {
-    // look for end of next number
     val c = buf[j].toInt().toChar()
+
+    if (c == '<' && sb.isBlank()) {
+      // we're at the end of the posList and did not find any more coordinates
+      break
+    }
+
     if (c == ' ' || c == '<') {
       when (n) {
-        0 -> x = sb.toString().toDouble()
-        1 -> y = sb.toString().toDouble()
-        2 -> { /* skip z */ }
-        3 -> {
+        0 -> {
+          x = sb.toString().toDouble()
+          n++
+        }
+        1 -> {
+          y = sb.toString().toDouble()
+          n++
+        }
+        2 -> {
+          // don't parse z
+          // compare x and y
           if (bbox.contains(x, y)) {
             // stop as soon as we find a match
             return j
@@ -206,7 +222,6 @@ fun intersectsPosList(buf: FileBuffer, i: Long, bbox: BoundingBox): Long {
           n = 0
         }
       }
-      ++n
 
       if (c == '<') {
         // end of pos list
@@ -218,8 +233,8 @@ fun intersectsPosList(buf: FileBuffer, i: Long, bbox: BoundingBox): Long {
       while (j < buf.size && buf[j].toInt().toChar() == ' ') j++
     } else {
       sb.append(c)
+      ++j
     }
-    ++j
   }
 
   return -1
@@ -605,7 +620,7 @@ suspend fun main() {
     log("*** Bounding box")
     benchmark {
       singleOrMultiple { path ->
-        run(path, emptyList(), BoundingBox(996800.0, 18600.0, 996900.0, 18700.0)) { _, _ -> true }
+        run(path, emptyList(), BoundingBox(987700.0, 211100.0, 987900.0, 211300.0)) { _, _ -> true }
       }
     }
   }
@@ -644,6 +659,15 @@ suspend fun main() {
             } ?: false
           }
         }
+      }
+    }
+  }
+
+  if (test == 12) {
+    log("*** Bounding box (large)")
+    benchmark {
+      singleOrMultiple { path ->
+        run(path, emptyList(), BoundingBox(950000.0, 210000.0, 1000000.0, 220000.0)) { _, _ -> true }
       }
     }
   }
