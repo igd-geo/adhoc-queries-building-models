@@ -15,7 +15,7 @@ Remove the filename from the argument `--input` to search in all files of the di
 
 To run the program in benchmark mode, add the parameter `--benchmark`. You have to execute the program with `sudo` because it clears the disk cache between the iterations. 
 ```
-sudo ./gradlew run --args="--test 1 --input /home/hendrik/data/gml/new-york/DA_WISE_GML_enhanced/ --benchmark"
+sudo ./gradlew run --args="--test 1 --input /PATH/TO/DA_WISE_GML_enhanced/ --benchmark"
 ```
 
 The code was tested using Ubuntu and macOS. It uses the Boyer Moore Horspool implementation with Raita's improvement from Johann Burkard licensed under the MIT license: https://github.com/elefana/stringsearch
