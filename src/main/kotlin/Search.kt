@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics
 import org.codehaus.staxmate.SMInputFactory
 import java.io.File
+import java.io.Serializable
 import java.io.StringReader
 import kotlin.math.roundToInt
 
@@ -51,7 +52,7 @@ data class SearchResult(val matches: List<String>, val filesize: Long,
     val chunksSearchedAgain: Int = 0, val valueNotFound: Int = 0)
 
 data class Substring(val start: Long, val end: Long, val text: String)
-data class BoundingBox(val minX: Double, val minY: Double, val maxX: Double, val maxY: Double) {
+data class BoundingBox(val minX: Double, val minY: Double, val maxX: Double, val maxY: Double): Serializable {
   fun contains(other: BoundingBox): Boolean {
     val rx = minX..maxX
     val ry = minY..maxY
