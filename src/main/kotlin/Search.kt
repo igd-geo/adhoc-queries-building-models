@@ -192,7 +192,12 @@ fun getAttributeValue(buf: FileBuffer, i: Long, genNamespacePrefix: String): Sub
   return null
 }
 
-fun intersectsPosList(buf: FileBuffer, i: Long, bbox: BoundingBox): Long {
+/**
+ * @return true if the bbox contains all points of the poslist
+ * that starts at position i in buf. false otherwise.
+ * Together with the last checked byte position.
+ */
+fun containsPosList(buf: FileBuffer, i: Long, bbox: BoundingBox): Pair<Boolean, Long> {
   val posListStart = indexOf(buf, i, ">") + 1
 
   val sb = StringBuilder()
@@ -216,19 +221,16 @@ fun intersectsPosList(buf: FileBuffer, i: Long, bbox: BoundingBox): Long {
       when (n) {
         0 -> {
           x = sb.toString().toDouble()
+          if (x !in bbox.minX..bbox.maxX) return Pair(false, j)
           n++
         }
         1 -> {
           y = sb.toString().toDouble()
+          if (y !in bbox.minY..bbox.maxY) return Pair(false, j)
           n++
         }
         2 -> {
           // don't parse z
-          // compare x and y
-          if (bbox.contains(x, y)) {
-            // stop as soon as we find a match
-            return j
-          }
           n = 0
         }
       }
@@ -247,7 +249,7 @@ fun intersectsPosList(buf: FileBuffer, i: Long, bbox: BoundingBox): Long {
     }
   }
 
-  return -1
+  return Pair(true, j)
 }
 
 fun findNextTag(buf: FileBuffer, start: Long): Substring {
@@ -278,6 +280,33 @@ fun extractChunk(buf: FileBuffer, first: Long, last: Long,
     namespacePrefixes: Map<Namespace, String>): Substring {
   val r = findChunk(buf, first, last, namespacePrefixes)
   return Substring(r.first, r.last, substring(buf, r.first, r.last))
+}
+
+fun isChunkInBoundingBox(chunkRange: LongRange, buf: FileBuffer, firstPosListThatIsInBoundingBox: LongRange, bbox: BoundingBox): Boolean {
+
+  // TODO: Move to instance variables
+  val rootElement = readRootElement(buf)
+  val namespacePrefixes = extractNamespacePrefixes(rootElement)
+  val gmlNamespacePrefix = namespacePrefixes[Namespace.GML] ?: ""
+  val posListPattern = "<${gmlNamespacePrefix}posList".toByteArray()
+  val processedPosListPattern = processBytes(posListPattern)
+
+  val firstPosListInChunk = searchBytes(buf, chunkRange.first, chunkRange.last, posListPattern, processedPosListPattern)
+
+  // There must not be a posList in the chunk before the found one (starting at firstPosListThatIsInBoundingBox)
+  // Otherwise this would have been found before if its coordinates are in the bbox.
+  if (firstPosListInChunk < firstPosListThatIsInBoundingBox.first) {
+    return false
+  }
+
+  var nextPosList = searchBytes(buf, firstPosListThatIsInBoundingBox.last, chunkRange.last, posListPattern, processedPosListPattern)
+  while (nextPosList >= 0) {
+    val containsPosList = containsPosList(buf, nextPosList, bbox)
+    if (!containsPosList.first) return false // This posList is not in the bbox --> The chunk is not in the bbox
+    nextPosList = searchBytes(buf, containsPosList.second, chunkRange.last, posListPattern, processedPosListPattern)
+  }
+
+  return true
 }
 
 // strategy find 'key' in text, check if it's an attribute, get attribute
@@ -368,13 +397,22 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
       posListsChecked++
       var nextSearchPos = i + posListPattern.size
 
-      val intersectsPos = intersectsPosList(buf, i, bbox)
-      if (intersectsPos != -1L) {
-        val chunkRange = findChunk(buf, i, intersectsPos, namespacePrefixes)
-        val chunk = substring(buf, chunkRange.first, chunkRange.last)
+      val containsPosList = containsPosList(buf, i, bbox)
+      if (containsPosList.first) {
+        // This posList is in the searched bounding box
+        // --> The corresponding chunk might be a result
+        // --> Check the other posLists of this chunk
+        val chunkRange = findChunk(buf, i, containsPosList.second, namespacePrefixes)
         checked++
-        matches.add(chunk)
+        val chunkValid = isChunkInBoundingBox(chunkRange, buf, i..containsPosList.second, bbox)
+        if (chunkValid) {
+          val chunk = substring(buf, chunkRange.first, chunkRange.last)
+          matches.add(chunk)
+        }
         nextSearchPos = chunkRange.last
+      } else {
+        // We can continue at the last checked position of the posList. The bytes before only contain coordinates.
+        nextSearchPos = containsPosList.second
       }
 
       i = searchBytes(buf, nextSearchPos, buf.size, posListPattern, processedPosListPattern)
