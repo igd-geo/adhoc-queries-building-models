@@ -17,6 +17,9 @@ class Index<T>(initKey: Long, initElement: T): Serializable {
     // The first entry (lowest morton code)
     private var first = Node(initKey, initElement, null)
 
+    // Flag to indicate if the index has been modified after loading.
+    var indexChanged = false
+
     @Throws(IOException::class)
     private fun writeObject(objectOutputStream: ObjectOutputStream) {
         objectOutputStream.writeLong(indexedBoundary)
@@ -47,6 +50,7 @@ class Index<T>(initKey: Long, initElement: T): Serializable {
     }
 
     fun add(key: Long, element: T) {
+        indexChanged = true
         if (key < first.key) {
             first = Node(key, element, first)
             return

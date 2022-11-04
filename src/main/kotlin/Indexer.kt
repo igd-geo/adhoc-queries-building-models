@@ -44,12 +44,12 @@ class Indexer(path: String) {
     }
 
     fun saveIndex() {
+        if (index?.indexChanged == false) return
         val fileOutputStream = FileOutputStream(serializedIndex)
         val objectOutputStream = ObjectOutputStream(fileOutputStream)
         objectOutputStream.writeObject(index)
         objectOutputStream.flush()
         objectOutputStream.close()
-
     }
 
     private fun getNextChunk(startPos: Long): LongRange? {
