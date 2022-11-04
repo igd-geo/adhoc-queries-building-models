@@ -691,6 +691,9 @@ suspend fun runTest(test: Int, files: List<String>, benchmark: Boolean) {
     13 -> Pair("*** Bounding box (large)") { path ->
       run(path, emptyList(), BoundingBox(950000.0, 210000.0, 1000000.0, 220000.0)) { _, _ -> true }
     }
+    14 -> Pair("*** Bounding box (large) with index") { path ->
+      run(path, emptyList(), BoundingBox(950000.0, 210000.0, 1000000.0, 220000.0), true) { _, _ -> true }
+    }
     else -> throw RuntimeException("Unknown test $test. Set a value between 1 and 13.")
   }
 
