@@ -186,7 +186,7 @@ class Indexer(path: String) {
         val results = filtered.mapNotNull {
             val chunkRange = it.chunkStart..it.chunkEnd
             val firstPosListThatIsInBoundingBox = chunkRange.first..chunkRange.first // We haven't found any posList yet. Set to the start of the chunk.
-            val chunkValid = isChunkInBoundingBox(chunkRange, buf, firstPosListThatIsInBoundingBox, boundingBox)
+            val chunkValid = isChunkInBoundingBox(chunkRange, buf, firstPosListThatIsInBoundingBox, boundingBox, posListPattern, processedPosListPattern)
             if (chunkValid) {
                 val chunk = substring(buf, chunkRange.first, chunkRange.last)
                 chunk

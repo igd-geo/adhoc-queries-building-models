@@ -16,7 +16,7 @@ import kotlin.math.roundToInt
 val XML_FACTORY = SMInputFactory(InputFactoryImpl())
 
 const val DEFAULT_WARMUP_RUNS = 2
-const val DEFAULT_BENCH_RUNS = 5
+const val DEFAULT_BENCH_RUNS = 15
 
 const val NAMESPACE_GML = "http://www.opengis.net/gml"
 const val NAMESPACE_CITYGML_1_0 = "http://www.opengis.net/citygml/1.0"
@@ -35,6 +35,10 @@ var runType = "BENCH"
 var run = 0
 var maxRuns = 10
 const val LOG_FILE = "out.log"
+
+val indexUseStats = DescriptiveStatistics()
+val indexBuildStats = DescriptiveStatistics()
+val adhocSearchStats = DescriptiveStatistics()
 
 fun log(msg: String) {
   if (disableLog) return
@@ -283,14 +287,8 @@ fun extractChunk(buf: FileBuffer, first: Long, last: Long,
   return Substring(r.first, r.last, substring(buf, r.first, r.last))
 }
 
-fun isChunkInBoundingBox(chunkRange: LongRange, buf: FileBuffer, firstPosListThatIsInBoundingBox: LongRange, bbox: BoundingBox): Boolean {
-
-  // TODO: Move to instance variables
-  val rootElement = readRootElement(buf)
-  val namespacePrefixes = extractNamespacePrefixes(rootElement)
-  val gmlNamespacePrefix = namespacePrefixes[Namespace.GML] ?: ""
-  val posListPattern = "<${gmlNamespacePrefix}posList".toByteArray()
-  val processedPosListPattern = processBytes(posListPattern)
+fun isChunkInBoundingBox(chunkRange: LongRange, buf: FileBuffer, firstPosListThatIsInBoundingBox: LongRange, bbox: BoundingBox,
+                         posListPattern: ByteArray, processedPosListPattern: IntArray): Boolean {
 
   val firstPosListInChunk = searchBytes(buf, chunkRange.first, chunkRange.last, posListPattern, processedPosListPattern)
 
@@ -390,10 +388,20 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
     }
   } else if (bbox != null) {
     // no keys - just look for bounding box
+
+    val indexUseStart = System.currentTimeMillis()
+    val indexer = Indexer(path)
+    val indexHits = indexer.find(bbox)
+    indexUseStats.addValue((System.currentTimeMillis() - indexUseStart).toDouble())
+    matches.addAll(indexHits)
+
+    val adhocSearchStart = System.currentTimeMillis()
     val gmlNamespacePrefix = namespacePrefixes[Namespace.GML] ?: ""
     val posListPattern = "<${gmlNamespacePrefix}posList".toByteArray()
     val processedPosListPattern = processBytes(posListPattern)
-    var i = searchBytes(buf, 0, buf.size, posListPattern, processedPosListPattern)
+
+    // Get the byte position of the first hit
+    var i = searchBytes(buf, indexer.index?.indexedBoundary ?: 0, buf.size, posListPattern, processedPosListPattern)
     while (i >= 0) {
       posListsChecked++
       var nextSearchPos = i + posListPattern.size
@@ -405,7 +413,7 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
         // --> Check the other posLists of this chunk
         val chunkRange = findChunk(buf, i, containsPosList.second, namespacePrefixes)
         checked++
-        val chunkValid = isChunkInBoundingBox(chunkRange, buf, i..containsPosList.second, bbox)
+        val chunkValid = isChunkInBoundingBox(chunkRange, buf, i..containsPosList.second, bbox, posListPattern, processedPosListPattern)
         if (chunkValid) {
           val chunk = substring(buf, chunkRange.first, chunkRange.last)
           matches.add(chunk)
@@ -418,6 +426,14 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
 
       i = searchBytes(buf, nextSearchPos, buf.size, posListPattern, processedPosListPattern)
     }
+    adhocSearchStats.addValue((System.currentTimeMillis() - adhocSearchStart).toDouble())
+
+    val indexBuildStart = System.currentTimeMillis()
+    val remainingTime = 500 - (indexBuildStart - start)
+    if (remainingTime < 0) indexer.index(2000) // There is no time left -> Index only a few chunks
+    else indexer.index(remainingTime.toInt() * 500)
+    indexer.saveIndex()
+    indexBuildStats.addValue((System.currentTimeMillis() - indexBuildStart).toDouble())
   }
 
   val duration = System.currentTimeMillis() - start
@@ -486,7 +502,7 @@ suspend fun sync() = withContext(Dispatchers.IO) {
  * Afterwards [runs] times for benchmarking.
  * Clears cache between each run.
  */
-suspend fun benchmark(warmupRuns: Int = DEFAULT_WARMUP_RUNS, runs: Int = DEFAULT_BENCH_RUNS, block: suspend () -> Unit) {
+suspend fun benchmark(warmupRuns: Int = DEFAULT_WARMUP_RUNS, runs: Int = DEFAULT_BENCH_RUNS, preRunHook: () -> Unit, block: suspend () -> Unit) {
   runType = "WARM"
   maxRuns = warmupRuns
   run = 0
@@ -502,6 +518,12 @@ suspend fun benchmark(warmupRuns: Int = DEFAULT_WARMUP_RUNS, runs: Int = DEFAULT
   }
   val warmupDuration = warmupStats.sum
   log("Warmup completed after $warmupDuration ms")
+
+  preRunHook()
+
+  indexUseStats.clear()
+  indexBuildStats.clear()
+  adhocSearchStats.clear()
 
   runType = "BENCH"
   maxRuns = runs
@@ -541,6 +563,10 @@ suspend fun benchmark(warmupRuns: Int = DEFAULT_WARMUP_RUNS, runs: Int = DEFAULT
   log("Min: ${stats.min.roundToInt()} ms")
   log("Max: ${stats.max.roundToInt()} ms")
   log("Std. dev.: ${stats.standardDeviation.roundToInt()} ms")
+  log("All times: ${stats.values.joinToString(" ")}")
+  log("All adhocSearchStats: ${adhocSearchStats.values.joinToString(" ")}")
+  log("All indexBuildStats: ${indexBuildStats.values.joinToString(" ")}")
+  log("All indexUseStats: ${indexUseStats.values.joinToString(" ")}")
   log("-----")
 }
 
@@ -660,7 +686,16 @@ suspend fun runTest(test: Int, files: List<String>, benchmark: Boolean) {
 
   if (benchmark) {
     log(testBlock.first) // The "title" of the test.
-    benchmark {
+
+    // Delete index files from warm up.
+    val preRunHook = { ->
+      files
+        .map { File("$it.index") }
+        .filter { it.exists() }
+        .forEach { it.delete() }
+    }
+
+    benchmark(preRunHook = preRunHook) {
       singleOrMultiple(files, testBlock.second)
     }
   } else {
