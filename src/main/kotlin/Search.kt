@@ -318,7 +318,7 @@ fun run(path: String, key: String, matches: (String) -> Boolean): SearchResult {
   return run(path, listOf(key)) { _, value -> matches(value) }
 }
 
-fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
+fun run(path: String, keys: List<String>, bbox: BoundingBox? = null, useIndex: Boolean = false,
     matcher: (key: String, value: String) -> Boolean): SearchResult {
   log(path)
 
@@ -389,11 +389,16 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
   } else if (bbox != null) {
     // no keys - just look for bounding box
 
-    val indexUseStart = System.currentTimeMillis()
-    val indexer = Indexer(path)
-    val indexHits = indexer.find(bbox)
-    indexUseStats.addValue((System.currentTimeMillis() - indexUseStart).toDouble())
-    matches.addAll(indexHits)
+    var indexer: Indexer? = null
+    var adhocStart = 0L
+    if (useIndex) {
+      val indexUseStart = System.currentTimeMillis()
+      indexer = Indexer(path)
+      val indexHits = indexer.find(bbox)
+      indexUseStats.addValue((System.currentTimeMillis() - indexUseStart).toDouble())
+      matches.addAll(indexHits)
+      adhocStart = indexer.index?.indexedBoundary ?: 0
+    }
 
     val adhocSearchStart = System.currentTimeMillis()
     val gmlNamespacePrefix = namespacePrefixes[Namespace.GML] ?: ""
@@ -401,7 +406,7 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
     val processedPosListPattern = processBytes(posListPattern)
 
     // Get the byte position of the first hit
-    var i = searchBytes(buf, indexer.index?.indexedBoundary ?: 0, buf.size, posListPattern, processedPosListPattern)
+    var i = searchBytes(buf, adhocStart, buf.size, posListPattern, processedPosListPattern)
     while (i >= 0) {
       posListsChecked++
       var nextSearchPos = i + posListPattern.size
@@ -428,12 +433,14 @@ fun run(path: String, keys: List<String>, bbox: BoundingBox? = null,
     }
     adhocSearchStats.addValue((System.currentTimeMillis() - adhocSearchStart).toDouble())
 
-    val indexBuildStart = System.currentTimeMillis()
-    val remainingTime = 500 - (indexBuildStart - start)
-    if (remainingTime < 0) indexer.index(2000) // There is no time left -> Index only a few chunks
-    else indexer.index(remainingTime.toInt() * 500)
-    indexer.saveIndex()
-    indexBuildStats.addValue((System.currentTimeMillis() - indexBuildStart).toDouble())
+    if (useIndex) {
+      val indexBuildStart = System.currentTimeMillis()
+      val remainingTime = 500 - (indexBuildStart - start)
+      if (remainingTime < 0) indexer?.index(2000) // There is no time left -> Index only a few chunks
+      else indexer?.index(remainingTime.toInt() * 500)
+      indexer?.saveIndex()
+      indexBuildStats.addValue((System.currentTimeMillis() - indexBuildStart).toDouble())
+    }
   }
 
   val duration = System.currentTimeMillis() - start
@@ -563,7 +570,7 @@ suspend fun benchmark(warmupRuns: Int = DEFAULT_WARMUP_RUNS, runs: Int = DEFAULT
   log("Min: ${stats.min.roundToInt()} ms")
   log("Max: ${stats.max.roundToInt()} ms")
   log("Std. dev.: ${stats.standardDeviation.roundToInt()} ms")
-  log("All times: ${stats.values.joinToString(" ")}")
+  log("All total times: ${stats.values.joinToString(" ")}")
   log("All adhocSearchStats: ${adhocSearchStats.values.joinToString(" ")}")
   log("All indexBuildStats: ${indexBuildStats.values.joinToString(" ")}")
   log("All indexUseStats: ${indexUseStats.values.joinToString(" ")}")
@@ -652,7 +659,10 @@ suspend fun runTest(test: Int, files: List<String>, benchmark: Boolean) {
     9 -> Pair("*** Bounding box") { path ->
       run(path, emptyList(), BoundingBox(987700.0, 211100.0, 987900.0, 211300.0)) { _, _ -> true }
     }
-    10 -> Pair("*** zipcode AND numfloors") { path ->
+    10 -> Pair("*** Bounding box with index") { path ->
+      run(path, emptyList(), BoundingBox(987700.0, 211100.0, 987900.0, 211300.0), true) { _, _ -> true }
+    }
+    11 -> Pair("*** zipcode AND numfloors") { path ->
       run(path, listOf("zipcode", "numfloors")) { k, v ->
         if (k == "zipcode") {
           v.toIntOrNull()?.let { zipcode ->
@@ -665,7 +675,7 @@ suspend fun runTest(test: Int, files: List<String>, benchmark: Boolean) {
         }
       }
     }
-    11 -> Pair("*** numfloors AND zipcode") { path ->
+    12 -> Pair("*** numfloors AND zipcode") { path ->
       run(path, listOf("numfloors", "zipcode")) { k, v ->
         if (k == "zipcode") {
           v.toIntOrNull()?.let { zipcode ->
@@ -678,10 +688,10 @@ suspend fun runTest(test: Int, files: List<String>, benchmark: Boolean) {
         }
       }
     }
-    12 -> Pair("*** Bounding box (large)") { path ->
+    13 -> Pair("*** Bounding box (large)") { path ->
       run(path, emptyList(), BoundingBox(950000.0, 210000.0, 1000000.0, 220000.0)) { _, _ -> true }
     }
-    else -> throw RuntimeException("Unknown test $test. Set a value between 1 and 12.")
+    else -> throw RuntimeException("Unknown test $test. Set a value between 1 and 13.")
   }
 
   if (benchmark) {
