@@ -1,20 +1,49 @@
+import java.io.IOException
+import java.io.ObjectInputStream
+import java.io.ObjectOutputStream
 import java.io.Serializable
-import java.util.LinkedList
+import java.util.*
 
 class Index<T>(initKey: Long, initElement: T): Serializable {
+    companion object {
+        const val serialVersionUID = 7829136421241571165L
+    }
 
     class Node<T>(val key: Long, val element: T, var next: Node<T>?): Serializable
 
     // Byte position in buf until where the index exists. (exclusive)
     var indexedBoundary = 0L
 
-    /**
-     * The first entry (lowest morton code)
-     */
+    // The first entry (lowest morton code)
     private var first = Node(initKey, initElement, null)
 
-    override fun writeObject() {
-        LinkedList<String>()
+    @Throws(IOException::class)
+    private fun writeObject(objectOutputStream: ObjectOutputStream) {
+        objectOutputStream.writeLong(indexedBoundary)
+        objectOutputStream.writeInt(size())
+        var currentNode: Node<T>? = first
+        while (currentNode != null) {
+            objectOutputStream.writeLong(currentNode.key)
+            objectOutputStream.writeObject(currentNode.element)
+            currentNode = currentNode.next
+        }
+    }
+
+    @Throws(IOException::class, ClassNotFoundException::class)
+    private fun readObject(objectInputStream: ObjectInputStream) {
+        indexedBoundary = objectInputStream.readLong()
+        val size = objectInputStream.readInt()
+        var lastNode: Node<T>? = null
+        for (i in 0 until size) {
+            val key = objectInputStream.readLong()
+            val element = objectInputStream.readObject() as T
+            val node = Node(key, element, null)
+            if (first == null) first = node
+            lastNode?.next = node
+            lastNode = node
+        }
+
+        log("Deserialized $size entries for the index")
     }
 
     fun add(key: Long, element: T) {

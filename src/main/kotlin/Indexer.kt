@@ -17,15 +17,15 @@ class Indexer(path: String) {
         const val PRECISION = 2 // cm resolution
     }
 
-    val buf = FileBuffer(path)
-    val rootElement = readRootElement(buf)
-    val namespacePrefixes = extractNamespacePrefixes(rootElement)
+    private val buf = FileBuffer(path)
+    private val rootElement = readRootElement(buf)
+    private val namespacePrefixes = extractNamespacePrefixes(rootElement)
 
-    val gmlNamespacePrefix = namespacePrefixes[Namespace.GML] ?: ""
-    val posListPattern = "<${gmlNamespacePrefix}posList".toByteArray()
-    val processedPosListPattern = processBytes(posListPattern)
+    private val gmlNamespacePrefix = namespacePrefixes[Namespace.GML] ?: ""
+    private val posListPattern = "<${gmlNamespacePrefix}posList".toByteArray()
+    private val processedPosListPattern = processBytes(posListPattern)
 
-    val serializedIndex = File("$path.index")
+    private val serializedIndex = File("$path.index")
     var index: Index<IndexEntry>? = null
 
     init {
@@ -156,21 +156,11 @@ class Indexer(path: String) {
     }
 
     fun index(maxChunks: Int = Int.MAX_VALUE) {
-
-        println((1..10).first)
-        println((1..10).last)
-
+        val start = System.currentTimeMillis()
         var indexedChunksCounter = 0
         var chunk = getNextChunk(index?.indexedBoundary ?: 0L)
-        println(chunk)
         while (chunk != null && indexedChunksCounter < maxChunks) { // There are more chunks
-//            println(chunk.first.toString() + " to " + chunk.last)
-//            val chunkString = substring(buf, chunk.first, chunk.last)
-//            println(chunkString)
-
             val boundingBox = getChunkBoundingBox(chunk)
-//            println("" + boundingBox.minX + " " + boundingBox.minY + " " + boundingBox.maxX + " " + boundingBox.maxY)
-
             addToIndex(chunk, boundingBox)
             indexedChunksCounter++
 
@@ -179,7 +169,8 @@ class Indexer(path: String) {
             chunk = getNextChunk(nextBytePosition)
         }
 
-        println("${index?.size()} chunks indexed")
+        val duration = System.currentTimeMillis() - start
+        log("$indexedChunksCounter chunks indexed in $duration ms. Index size is now ${index?.size()}")
     }
 
     fun find(boundingBox: BoundingBox): List<String> {
