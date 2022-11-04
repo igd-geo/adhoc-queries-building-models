@@ -1,18 +1,10 @@
 import BoyerMooreHorspoolRaita.processBytes
 import BoyerMooreHorspoolRaita.searchBytes
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.io.ObjectInputStream
-import java.io.ObjectOutputStream
-import java.io.Serializable
 import java.lang.Double.max
 import java.lang.Double.min
 
 class Indexer(path: String) {
-
-    data class IndexEntry(val boundingBox: BoundingBox, val chunkStart: Long, val chunkEnd: Long): Serializable
-
     companion object {
         const val PRECISION = 2 // cm resolution
     }
@@ -37,19 +29,11 @@ class Indexer(path: String) {
             index = null
             return
         }
-        val fileInputStream = FileInputStream(serializedIndex)
-        val objectInputStream = ObjectInputStream(fileInputStream)
-        index = objectInputStream.readObject() as Index<IndexEntry>
-        objectInputStream.close()
+        index = Index.readIndex(serializedIndex) { IndexEntry.read(it) }
     }
 
     fun saveIndex() {
-        val fileOutputStream = FileOutputStream(serializedIndex)
-        val objectOutputStream = ObjectOutputStream(fileOutputStream)
-        objectOutputStream.writeObject(index)
-        objectOutputStream.flush()
-        objectOutputStream.close()
-
+        index?.writeIndex(serializedIndex)
     }
 
     private fun getNextChunk(startPos: Long): LongRange? {
