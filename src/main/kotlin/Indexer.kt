@@ -52,6 +52,9 @@ class Indexer(path: String) {
         objectOutputStream.close()
     }
 
+    /**
+     * Get the byte range of the next chunk after the passed startPos.
+     */
     private fun getNextChunk(startPos: Long): LongRange? {
         val namespacePrefix = namespacePrefixes[Namespace.CITYGML] ?: ""
         val startStr = "<${namespacePrefix}cityObjectMember"
@@ -65,6 +68,9 @@ class Indexer(path: String) {
         return s..e
     }
 
+    /**
+     * Get the bounding box around the posList starting at byte position i.
+     */
     private fun getPosListBoundingBox(i: Long): Pair<Long, BoundingBox> {
         val posListStart = indexOf(buf, i, ">") + 1
 
@@ -124,6 +130,10 @@ class Indexer(path: String) {
         return j to BoundingBox(minX, minY, maxX, maxY)
     }
 
+    /**
+     * Get the bounding box around the chunk defined by the passed byte range.
+     * This is a bounding box around all posLists in this chunk.
+     */
     private fun getChunkBoundingBox(chunk: LongRange): BoundingBox {
         var minX = Double.MAX_VALUE
         var minY = Double.MAX_VALUE
@@ -148,6 +158,9 @@ class Indexer(path: String) {
         return BoundingBox(minX, minY, maxX, maxY)
     }
 
+    /**
+     * Add the passed chunk with the passed bounding box to the index.
+     */
     private fun addToIndex(chunk: LongRange, boundingBox: BoundingBox) {
         val mortonCode = MortonCode.encode(boundingBox.minX.toFloat(), boundingBox.minY.toFloat(), PRECISION)
         val indexEntry = IndexEntry(boundingBox, chunk.first, chunk.last)
@@ -155,6 +168,9 @@ class Indexer(path: String) {
         else index!!.add(mortonCode, indexEntry)
     }
 
+    /**
+     * Add the next passed number of chunks to the index.
+     */
     fun index(maxChunks: Int = Int.MAX_VALUE) {
         val start = System.currentTimeMillis()
         var indexedChunksCounter = 0
@@ -170,31 +186,26 @@ class Indexer(path: String) {
         }
 
         val duration = System.currentTimeMillis() - start
-        log("$indexedChunksCounter chunks indexed in $duration ms. Index size is now ${index?.size()}")
+        log("$indexedChunksCounter chunks indexed in $duration ms. Index size is now ${index?.size}")
     }
 
     fun find(boundingBox: BoundingBox): List<String> {
+        val start = System.currentTimeMillis()
         val minKey = MortonCode.encode(boundingBox.minX.toFloat(), boundingBox.minY.toFloat(), PRECISION)
         val maxKey = MortonCode.encode(boundingBox.maxX.toFloat(), boundingBox.maxY.toFloat(), PRECISION)
-        val indexHits = index?.sublist(minKey, maxKey) ?: return emptyList()
+        val indexHits = index?.sublist(minKey, maxKey) {
+            // Use only the hits that are completely in the searched bounding box
+            boundingBox.contains(it.boundingBox)
+        } ?: return emptyList()
 
-        // Use only the hits that are completely in the searched bounding box
-        val filtered = indexHits.filter { boundingBox.contains(it.boundingBox) }
-
-        // Check if all coordinates of the hit are inside the searched bounding box
-        // Get the corresponding chunk if they are
-        val results = filtered.mapNotNull {
-            val chunkRange = it.chunkStart..it.chunkEnd
-            val firstPosListThatIsInBoundingBox = chunkRange.first..chunkRange.first // We haven't found any posList yet. Set to the start of the chunk.
-            val chunkValid = isChunkInBoundingBox(chunkRange, buf, firstPosListThatIsInBoundingBox, boundingBox, posListPattern, processedPosListPattern)
-            if (chunkValid) {
+        // Get the corresponding chunk
+        val results = indexHits.map {
+                val chunkRange = it.chunkStart..it.chunkEnd
                 val chunk = substring(buf, chunkRange.first, chunkRange.last)
                 chunk
-            } else {
-                null
             }
-        }
+        val duration = System.currentTimeMillis() - start
+        log("INDEX: Found ${results.size} hits in $duration ms")
         return results
     }
-
 }
