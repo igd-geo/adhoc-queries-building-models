@@ -199,7 +199,10 @@ class Indexer(path: String) {
         } ?: return emptyList()
 
         // Get the corresponding chunk
-        val results = indexHits.map {
+        val results = indexHits
+            // We have to read the data from the file. Ensure linear reading.
+            .sortedBy { it.chunkStart }
+            .map {
                 val chunkRange = it.chunkStart..it.chunkEnd
                 val chunk = substring(buf, chunkRange.first, chunkRange.last)
                 chunk
