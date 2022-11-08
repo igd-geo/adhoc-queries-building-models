@@ -29,18 +29,10 @@ object MortonCode {
         xi = xi and 0x00000000ffffffffL
 
         xi = (xi xor (xi shl 16)) and 0x0000ffff0000ffffL
-        //printFULLBinaryString(xi)
         xi = (xi xor (xi shl 8))  and 0x00ff00ff00ff00ffL
-        //printFULLBinaryString(xi)
         xi = (xi xor (xi shl 4))  and 0x0f0f0f0f0f0f0f0fL
-        //printFULLBinaryString(xi)
         xi = (xi xor (xi shl 2))  and 0x3333333333333333L
-        //printFULLBinaryString(xi)
         xi = (xi xor (xi shl 1))  and 0x5555555555555555L
-        //printFULLBinaryString(xi)
-
-        //printFULLBinaryString(x)
-        //printFULLBinaryString(xi)
         return xi
     }
 
