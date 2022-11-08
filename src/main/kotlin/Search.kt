@@ -659,10 +659,7 @@ suspend fun runTest(test: Int, files: List<String>, benchmark: Boolean) {
     9 -> Pair("*** Bounding box") { path ->
       run(path, emptyList(), BoundingBox(987700.0, 211100.0, 987900.0, 211300.0)) { _, _ -> true }
     }
-    10 -> Pair("*** Bounding box with index") { path ->
-      run(path, emptyList(), BoundingBox(987700.0, 211100.0, 987900.0, 211300.0), true) { _, _ -> true }
-    }
-    11 -> Pair("*** zipcode AND numfloors") { path ->
+    10 -> Pair("*** zipcode AND numfloors") { path ->
       run(path, listOf("zipcode", "numfloors")) { k, v ->
         if (k == "zipcode") {
           v.toIntOrNull()?.let { zipcode ->
@@ -675,7 +672,7 @@ suspend fun runTest(test: Int, files: List<String>, benchmark: Boolean) {
         }
       }
     }
-    12 -> Pair("*** numfloors AND zipcode") { path ->
+    11 -> Pair("*** numfloors AND zipcode") { path ->
       run(path, listOf("numfloors", "zipcode")) { k, v ->
         if (k == "zipcode") {
           v.toIntOrNull()?.let { zipcode ->
@@ -688,10 +685,13 @@ suspend fun runTest(test: Int, files: List<String>, benchmark: Boolean) {
         }
       }
     }
-    13 -> Pair("*** Bounding box (large)") { path ->
+    12 -> Pair("*** Bounding box (large)") { path ->
       run(path, emptyList(), BoundingBox(950000.0, 210000.0, 1000000.0, 220000.0)) { _, _ -> true }
     }
-    14 -> Pair("*** Bounding box (large) with index") { path ->
+    13 -> Pair("*** Bounding box (like test 9) with index") { path ->
+      run(path, emptyList(), BoundingBox(987700.0, 211100.0, 987900.0, 211300.0), true) { _, _ -> true }
+    }
+    14 -> Pair("*** Bounding box (large) (like test 12) with index") { path ->
       run(path, emptyList(), BoundingBox(950000.0, 210000.0, 1000000.0, 220000.0), true) { _, _ -> true }
     }
     else -> throw RuntimeException("Unknown test $test. Set a value between 1 and 13.")
