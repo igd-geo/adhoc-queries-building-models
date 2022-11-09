@@ -16,7 +16,7 @@ import kotlin.math.roundToInt
 val XML_FACTORY = SMInputFactory(InputFactoryImpl())
 
 const val DEFAULT_WARMUP_RUNS = 2
-const val DEFAULT_BENCH_RUNS = 15
+const val DEFAULT_BENCH_RUNS = 20
 
 const val NAMESPACE_GML = "http://www.opengis.net/gml"
 const val NAMESPACE_CITYGML_1_0 = "http://www.opengis.net/citygml/1.0"
