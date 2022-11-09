@@ -1,5 +1,7 @@
 import BoyerMooreHorspoolRaita.processBytes
 import BoyerMooreHorspoolRaita.searchBytes
+import java.io.BufferedInputStream
+import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -38,7 +40,7 @@ class Indexer(path: String) {
             return
         }
         val fileInputStream = FileInputStream(serializedIndex)
-        val objectInputStream = ObjectInputStream(fileInputStream)
+        val objectInputStream = ObjectInputStream(BufferedInputStream(fileInputStream))
         index = objectInputStream.readObject() as Index<IndexEntry>
         objectInputStream.close()
     }
@@ -46,7 +48,7 @@ class Indexer(path: String) {
     fun saveIndex() {
         if (index?.indexChanged == false) return
         val fileOutputStream = FileOutputStream(serializedIndex)
-        val objectOutputStream = ObjectOutputStream(fileOutputStream)
+        val objectOutputStream = ObjectOutputStream(BufferedOutputStream(fileOutputStream))
         objectOutputStream.writeObject(index)
         objectOutputStream.flush()
         objectOutputStream.close()
