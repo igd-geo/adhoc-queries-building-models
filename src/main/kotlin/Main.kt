@@ -14,7 +14,9 @@ class Main: CliktCommand() {
 
     override fun run() {
         val files = if (File(input).isDirectory) {
-            File(input).listFiles()!!.map { it.absolutePath }
+            File(input).listFiles()!!
+                .filter { it.extension.lowercase() == "gml" }
+                .map { it.absolutePath }
         } else {
             listOf(input)
         }
